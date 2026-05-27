@@ -1,7 +1,36 @@
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import coreURL from '@ffmpeg/core?url';
-import wasmURL from '@ffmpeg/core/wasm?url';
+import type { FFmpeg as FFmpegType } from '@ffmpeg/ffmpeg';
 import { FrameRecorder } from './recorder';
+
+const FFMPEG_CORE_VERSION = '0.12.10';
+const LOCAL_CORE = '/vendor/ffmpeg-core.js';
+const LOCAL_WASM = '/vendor/ffmpeg-core.wasm';
+const CDN_BASE = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
+const R2_ASSET_BASE_URL = import.meta.env.VITE_FFMPEG_ASSET_BASE_URL?.replace(/\/+$/, '');
+
+function createCoreURLs(baseURL: string) {
+  return {
+    coreURL: `${baseURL}/ffmpeg-core.js`,
+    wasmURL: `${baseURL}/ffmpeg-core.wasm`,
+  };
+}
+
+async function resolveCoreURLs(signal?: AbortSignal) {
+  if (R2_ASSET_BASE_URL) {
+    return createCoreURLs(R2_ASSET_BASE_URL);
+  }
+
+  try {
+    // Some proxies/networks behave differently for HEAD requests.
+    // Use GET to avoid Cloudflare 522/timeout edge cases.
+    const res = await fetch(LOCAL_CORE, { method: 'GET', signal });
+    if (res.ok) return { coreURL: LOCAL_CORE, wasmURL: LOCAL_WASM };
+  } catch {
+    // ignore and fallback to remote sources
+  }
+
+
+  return createCoreURLs(CDN_BASE);
+}
 
 interface FFmpegFrameExportOptions {
   canvas: HTMLCanvasElement;
@@ -14,28 +43,55 @@ interface FFmpegFrameExportOptions {
   signal?: AbortSignal;
 }
 
-let ffmpegInstance: FFmpeg | null = null;
-let ffmpegLoadPromise: Promise<FFmpeg> | null = null;
+let ffmpegInstance: FFmpegType | null = null;
+let ffmpegLoadPromise: Promise<FFmpegType> | null = null;
 
-async function getFFmpeg(signal?: AbortSignal): Promise<FFmpeg> {
+async function getFFmpeg(signal?: AbortSignal): Promise<FFmpegType> {
   if (ffmpegInstance) return ffmpegInstance;
   if (ffmpegLoadPromise) return ffmpegLoadPromise;
 
-  const ffmpeg = new FFmpeg();
+  // Dynamically import `@ffmpeg/ffmpeg` at runtime so it is not bundled
+  // into the main application chunk during build.
   ffmpegLoadPromise = (async () => {
     throwIfAborted(signal);
-    await ffmpeg.load({ coreURL, wasmURL }, { signal });
-    ffmpegInstance = ffmpeg;
-    return ffmpeg;
+    const { FFmpeg } = await import('@ffmpeg/ffmpeg');
+    const ffmpeg = new FFmpeg();
+    const urls = await resolveCoreURLs(signal);
+
+    // NOTE: Do not run verbose network/debug checks in production.
+    // These can increase load and trigger Cloudflare 522 timeouts.
+    if (import.meta.env.DEV) {
+      try {
+        console.log('[ffmpeg] resolved URLs', urls);
+        const r = await fetch(urls.coreURL, { method: 'GET' });
+        console.log('[ffmpeg] core GET', r.status);
+        const r2 = await fetch(urls.wasmURL, { method: 'GET' });
+        console.log('[ffmpeg] wasm GET', r2.status);
+      } catch (e) {
+        console.warn('[ffmpeg] pre-load checks failed', e);
+      }
+    }
+
+
+    try {
+      await ffmpeg.load({ coreURL: urls.coreURL, wasmURL: urls.wasmURL }, { signal });
+    } catch (err) {
+      console.error('[ffmpeg] load failed', { coreURL: urls.coreURL, wasmURL: urls.wasmURL, err });
+      throw err;
+    }
+    ffmpegInstance = ffmpeg as unknown as FFmpegType;
+    return ffmpeg as unknown as FFmpegType;
   })();
 
   try {
     return await ffmpegLoadPromise;
   } catch (err) {
-    ffmpeg.terminate();
-    if (ffmpegLoadPromise) {
-      ffmpegLoadPromise = null;
+    const created = await ffmpegLoadPromise!.catch(() => null);
+    if (created) {
+      try { created.terminate(); } catch { /* ignore */ }
+      if (ffmpegInstance === created) ffmpegInstance = null;
     }
+    ffmpegLoadPromise = null;
     throw err;
   }
 }
