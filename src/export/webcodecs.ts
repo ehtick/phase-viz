@@ -12,7 +12,8 @@ interface WebCodecsExportOptions {
 
 const VIDEO_CODEC = 'avc1.42001f';
 const AUDIO_CODEC = 'mp4a.40.2';
-const AUDIO_CHUNK_SIZE = 2048;
+const AUDIO_CHUNK_SIZE = 8192;
+const MAX_VIDEO_QUEUE_SIZE = 24;
 
 export function canUseWebCodecsMP4() {
   return typeof VideoEncoder !== 'undefined'
@@ -72,6 +73,21 @@ export async function exportToMP4WithWebCodecs({
   try {
     await configureEncoders(videoEncoder, audioEncoder, width, height, fps, audioBuffer);
 
+    let videoProgress = 0;
+    let audioProgress = 0;
+    const updateEncodeProgress = () => {
+      onProgress(Math.min(0.94, videoProgress * 0.78 + audioProgress * 0.16));
+    };
+    const audioPromise = (async () => {
+      await encodeAudio(audioEncoder, audioBuffer, (p) => {
+        audioProgress = p;
+        updateEncodeProgress();
+      }, signal);
+      await audioEncoder.flush();
+      audioProgress = 1;
+      updateEncodeProgress();
+    })();
+
     for (let frame = 0; frame < totalFrames; frame++) {
       throwIfAborted(signal);
       const time = frame / fps;
@@ -87,19 +103,21 @@ export async function exportToMP4WithWebCodecs({
       videoEncoder.encode(videoFrame, { keyFrame: frame % (fps * 2) === 0 });
       videoFrame.close();
 
+      if (videoEncoder.encodeQueueSize > MAX_VIDEO_QUEUE_SIZE) {
+        await waitForVideoQueue(videoEncoder, Math.floor(MAX_VIDEO_QUEUE_SIZE / 2), signal);
+      }
+
       if (frame % 10 === 0 || frame === totalFrames - 1) {
-        onProgress((frame + 1) / totalFrames * 0.68);
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        videoProgress = (frame + 1) / totalFrames;
+        updateEncodeProgress();
+        await yieldToBrowser();
       }
     }
 
     await videoEncoder.flush();
-    onProgress(0.72);
-
-    await encodeAudio(audioEncoder, audioBuffer, (p) => {
-      onProgress(0.72 + p * 0.22);
-    }, signal);
-    await audioEncoder.flush();
+    videoProgress = 1;
+    updateEncodeProgress();
+    await audioPromise;
 
     throwIfAborted(signal);
     muxer.finalize();
@@ -122,15 +140,26 @@ async function configureEncoders(
   fps: number,
   audioBuffer: AudioBuffer,
 ) {
-  const videoConfig: VideoEncoderConfig = {
+  const videoBaseConfig: VideoEncoderConfig = {
     codec: VIDEO_CODEC,
     width,
     height,
     bitrate: Math.min(16_000_000, Math.max(4_000_000, width * height * fps * 0.16)),
     framerate: fps,
     avc: { format: 'avc' },
-    latencyMode: 'quality',
   };
+  const videoConfigs: VideoEncoderConfig[] = [{
+    ...videoBaseConfig,
+    hardwareAcceleration: 'prefer-hardware',
+    latencyMode: 'realtime',
+  }, {
+    ...videoBaseConfig,
+    hardwareAcceleration: 'no-preference',
+    latencyMode: 'realtime',
+  }, {
+    ...videoBaseConfig,
+    latencyMode: 'quality',
+  }];
   const audioConfig: AudioEncoderConfig = {
     codec: AUDIO_CODEC,
     sampleRate: audioBuffer.sampleRate,
@@ -138,17 +167,27 @@ async function configureEncoders(
     bitrate: 192_000,
   };
 
-  const [videoSupport, audioSupport] = await Promise.all([
-    VideoEncoder.isConfigSupported(videoConfig),
+  const [supportedVideoConfig, audioSupport] = await Promise.all([
+    getSupportedVideoConfig(videoConfigs),
     AudioEncoder.isConfigSupported(audioConfig),
   ]);
 
-  if (!videoSupport.supported || !audioSupport.supported) {
+  if (!supportedVideoConfig || !audioSupport.supported) {
     throw new Error('WebCodecs MP4 export is not supported in this browser');
   }
 
-  videoEncoder.configure(videoSupport.config ?? videoConfig);
+  videoEncoder.configure(supportedVideoConfig);
   audioEncoder.configure(audioSupport.config ?? audioConfig);
+}
+
+async function getSupportedVideoConfig(configs: VideoEncoderConfig[]) {
+  for (const config of configs) {
+    const support = await VideoEncoder.isConfigSupported(config);
+    if (support.supported) {
+      return support.config ?? config;
+    }
+  }
+  return null;
 }
 
 async function encodeAudio(
@@ -186,9 +225,27 @@ async function encodeAudio(
     }
     if (start % (AUDIO_CHUNK_SIZE * 16) === 0 || start + frames >= buffer.length) {
       onProgress((start + frames) / buffer.length);
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await yieldToBrowser();
     }
   }
+}
+
+async function waitForVideoQueue(
+  encoder: VideoEncoder,
+  targetSize: number,
+  signal?: AbortSignal,
+) {
+  while (encoder.encodeQueueSize > targetSize) {
+    throwIfAborted(signal);
+    await yieldToBrowser();
+  }
+}
+
+function yieldToBrowser(): Promise<void> {
+  const scheduler = (globalThis as {
+    scheduler?: { yield?: () => Promise<void> };
+  }).scheduler;
+  return scheduler?.yield?.() ?? new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function closeEncoder(encoder: VideoEncoder | AudioEncoder) {

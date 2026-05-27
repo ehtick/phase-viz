@@ -28,6 +28,9 @@ export class VisualizerScene {
 
   private time = 0;
   private cameraAngle = 0;
+  private bloomStrength = 0;
+  private datamoshAmount = 0;
+  private wasDatamoshActive = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -382,7 +385,7 @@ export class VisualizerScene {
     this.postMaterial.uniforms.uRgbSplit.value = effects.rgbSplit ? 1 : 0;
     this.postMaterial.uniforms.uChromaticAberration.value = effects.chromaticAberration ? 1 : 0;
     this.postMaterial.uniforms.uGlitchNoise.value = effects.glitchNoise ? 1 : 0;
-    this.postMaterial.uniforms.uDatamosh.value = effects.meltingDatamosh
+    const datamoshAmount = effects.meltingDatamosh
       ? 3.2
       : effects.glitchDatamosh
         ? 2.75
@@ -393,8 +396,11 @@ export class VisualizerScene {
             : effects.datamosh
               ? 1
               : 0;
+    this.postMaterial.uniforms.uDatamosh.value = datamoshAmount;
     this.postMaterial.uniforms.uScanlines.value = effects.scanlines ? 1 : 0;
     this.postMaterial.uniforms.uTransient.value = transient;
+    this.datamoshAmount = datamoshAmount;
+    this.bloomStrength = bloomStrength;
     this.bloomPass.setStrength(bloomStrength);
   }
 
@@ -403,12 +409,30 @@ export class VisualizerScene {
     this.renderer.setRenderTarget(this.rtA);
     this.renderer.render(this.scene, this.camera);
 
-    // 2. Bloom pass rtA → rtB
-    this.bloomPass.render(this.renderer, this.rtA, this.rtB);
+    // 2. Skip bloom work entirely when the effect is off.
+    const postInput = this.bloomStrength > 0.001
+      ? this.bloomPass.render(this.renderer, this.rtA, this.rtB)
+      : this.rtA;
 
-    // 3. Post pass rtB + previous frame → final target
-    this.postMaterial.uniforms.tDiffuse.value = this.rtB.texture;
+    // 3. Datamosh needs history; other post effects can go straight to the canvas.
+    const datamoshActive = this.datamoshAmount > 0;
+    this.postMaterial.uniforms.tDiffuse.value = postInput.texture;
     this.postMaterial.uniforms.tPrev.value = this.rtPrevFrame.texture;
+
+    if (!datamoshActive) {
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.postScene, this.postCamera);
+      this.wasDatamoshActive = false;
+      return;
+    }
+
+    if (!this.wasDatamoshActive) {
+      const datamoshAmount = this.postMaterial.uniforms.uDatamosh.value;
+      this.postMaterial.uniforms.uDatamosh.value = 0;
+      this.renderer.setRenderTarget(this.rtPrevFrame);
+      this.renderer.render(this.postScene, this.postCamera);
+      this.postMaterial.uniforms.uDatamosh.value = datamoshAmount;
+    }
     this.renderer.setRenderTarget(this.rtFinalFrame);
     this.renderer.render(this.postScene, this.postCamera);
 
@@ -418,6 +442,7 @@ export class VisualizerScene {
     this.renderer.render(this.copyScene, this.postCamera);
     [this.rtPrevFrame, this.rtFinalFrame] = [this.rtFinalFrame, this.rtPrevFrame];
     this.copyMaterial.map = this.rtPrevFrame.texture;
+    this.wasDatamoshActive = true;
   }
 
   resize(width: number, height: number) {
@@ -505,6 +530,9 @@ class BloomPass {
   private blurMatV: THREE.ShaderMaterial;
   private compositeMat: THREE.ShaderMaterial;
   private compositeScene: THREE.Scene;
+  private blurQuadH: THREE.Mesh;
+  private blurQuadV: THREE.Mesh;
+  private compositeQuad: THREE.Mesh;
   private strength = 1.0;
 
   constructor(w: number, h: number) {
@@ -565,25 +593,30 @@ class BloomPass {
         }
       `,
     });
-    this.compositeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.compositeMat));
+    this.blurQuadH = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blurMatH);
+    this.blurQuadV = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blurMatV);
+    this.compositeQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.compositeMat);
+    this.compositeScene.add(this.compositeQuad);
   }
 
-  render(renderer: THREE.WebGLRenderer, input: THREE.WebGLRenderTarget, output: THREE.WebGLRenderTarget) {
+  render(
+    renderer: THREE.WebGLRenderer,
+    input: THREE.WebGLRenderTarget,
+    output: THREE.WebGLRenderTarget,
+  ): THREE.WebGLRenderTarget {
     // Downsample + blur H
     this.blurMatH.uniforms.tDiffuse.value = input.texture;
-    const blurQuadH = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blurMatH);
-    this.blurScene.add(blurQuadH);
+    this.blurScene.add(this.blurQuadH);
     renderer.setRenderTarget(this.rtBlurA);
     renderer.render(this.blurScene, this.blurCam);
-    this.blurScene.remove(blurQuadH);
+    this.blurScene.remove(this.blurQuadH);
 
     // Blur V
     this.blurMatV.uniforms.tDiffuse.value = this.rtBlurA.texture;
-    const blurQuadV = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.blurMatV);
-    this.blurScene.add(blurQuadV);
+    this.blurScene.add(this.blurQuadV);
     renderer.setRenderTarget(this.rtBlurB);
     renderer.render(this.blurScene, this.blurCam);
-    this.blurScene.remove(blurQuadV);
+    this.blurScene.remove(this.blurQuadV);
 
     // Composite
     this.compositeMat.uniforms.tBase.value = input.texture;
@@ -591,6 +624,7 @@ class BloomPass {
     this.compositeMat.uniforms.uStrength.value = this.strength;
     renderer.setRenderTarget(output);
     renderer.render(this.compositeScene, this.blurCam);
+    return output;
   }
 
   setStrength(s: number) { this.strength = s; }
@@ -608,6 +642,9 @@ class BloomPass {
     this.blurMatH.dispose();
     this.blurMatV.dispose();
     this.compositeMat.dispose();
+    this.blurQuadH.geometry.dispose();
+    this.blurQuadV.geometry.dispose();
+    this.compositeQuad.geometry.dispose();
   }
 }
 

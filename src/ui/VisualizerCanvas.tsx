@@ -119,6 +119,10 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
     (timestamp: number) => {
       const scene = sceneRef.current;
       if (!scene) return;
+      if (isExporting || useStore.getState().isExporting) {
+        lastFrameTime.current = timestamp;
+        return;
+      }
 
       const dt = Math.min((timestamp - lastFrameTime.current) / 1000, 0.05);
       lastFrameTime.current = timestamp;
@@ -225,7 +229,7 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
       scene.render();
 
     },
-    [analysis, isPlaying, preset, effects, setFps, setCurrentTime],
+    [analysis, isPlaying, isExporting, preset, effects, setFps, setCurrentTime],
   );
 
   const renderExportFrames = useCallback<ExportFrameRenderer>(
