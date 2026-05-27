@@ -26,7 +26,7 @@ export class ParticleSystem {
 
     for (let i = 0; i < count; i++) {
       phases[i] = Math.random() * Math.PI * 2;
-      sizes[i] = 0.35 + Math.random() * 0.65;
+      sizes[i] = 0.22 + Math.random() * 0.38;
     }
 
     this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -90,7 +90,7 @@ export class ParticleSystem {
           vec2 uv = gl_PointCoord - 0.5;
           float d = length(uv);
           if (d > 0.5) discard;
-          float alpha = (1.0 - smoothstep(0.18, 0.5, d)) * vBrightness;
+          float alpha = (1.0 - smoothstep(0.36, 0.46, d)) * vBrightness;
           float t = length(vPosition) * 0.2;
           vec3 color = mix(uColorA, uColorB, clamp(t, 0.0, 1.0));
           gl_FragColor = vec4(color, alpha);

@@ -96,8 +96,13 @@ export class VisualizerScene {
           return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
         }
 
+        vec2 safeUv(vec2 uv) {
+          return clamp(uv, vec2(0.001), vec2(0.999));
+        }
+
         void main() {
           vec2 uv = vUv;
+          vec2 stableUv = vUv;
 
           // Glitch noise
           if (uGlitchNoise > 0.0) {
@@ -136,17 +141,19 @@ export class VisualizerScene {
             float slowNoise = rand(vec2(column, floor(uTime * 3.0)));
             float drip = smoothstep(0.28, 1.0, slowNoise + uTransient * 0.34);
             float wave = sin(uv.y * 16.0 + uTime * 2.5 + slowNoise * 6.2831);
-            uv.x += wave * 0.009 * drip;
-            uv.y -= (0.012 + slowNoise * 0.035) * drip * (0.55 + uTransient * 0.45);
+            uv.x += wave * 0.006 * drip;
+            uv.y -= (0.006 + slowNoise * 0.02) * drip * (0.45 + uTransient * 0.35);
           }
 
           // RGB Split
           float splitAmt = (uRgbSplit * 0.42 + uChromaticAberration * 0.28) * 0.015;
-          float r = texture2D(tDiffuse, uv + vec2(splitAmt, 0.0)).r;
+          uv = safeUv(uv);
+          float r = texture2D(tDiffuse, safeUv(uv + vec2(splitAmt, 0.0))).r;
           float g = texture2D(tDiffuse, uv).g;
-          float b = texture2D(tDiffuse, uv - vec2(splitAmt, 0.0)).b;
+          float b = texture2D(tDiffuse, safeUv(uv - vec2(splitAmt, 0.0))).b;
           vec4 color = vec4(r, g, b, 1.0);
           vec4 liveColor = color;
+          vec4 stableLiveColor = texture2D(tDiffuse, stableUv);
 
           // Datamosh
           if (uDatamosh > 0.0) {
@@ -169,24 +176,26 @@ export class VisualizerScene {
             } else if (uDatamosh >= 3.0) {
               float column = floor(uv.x * 38.0);
               float flow = rand(vec2(column, floor(uTime * 2.0)));
-              prevUv.y -= 0.018 + flow * 0.045 + uTransient * 0.025;
-              prevUv.x += sin(uv.y * 20.0 + uTime * 4.0 + flow * 8.0) * 0.012;
+              prevUv.y -= 0.008 + flow * 0.024 + uTransient * 0.014;
+              prevUv.x += sin(uv.y * 20.0 + uTime * 4.0 + flow * 8.0) * 0.008;
             }
-            vec4 prev = texture2D(tPrev, prevUv);
-            float smear = uDatamosh >= 3.0 ? 0.42 + uTransient * 0.05 : uDatamosh > 2.6 ? 0.44 + uTransient * 0.05 : uDatamosh > 2.0 ? 0.38 + uTransient * 0.04 : uDatamosh > 1.0 ? 0.5 + uTransient * 0.06 : 0.36;
+            vec4 prev = texture2D(tPrev, safeUv(prevUv));
+            float smear = uDatamosh >= 3.0 ? 0.24 + uTransient * 0.03 : uDatamosh > 2.6 ? 0.34 + uTransient * 0.04 : uDatamosh > 2.0 ? 0.3 + uTransient * 0.035 : uDatamosh > 1.0 ? 0.38 + uTransient * 0.04 : 0.28;
             color = mix(color, prev, smear);
             if (uDatamosh >= 3.0) {
               color.rgb = mix(color.rgb, vec3(color.r * 0.92, color.g * 1.03, color.b * 1.08), 0.18);
-              color.rgb += prev.rgb * 0.035;
-              color.rgb = mix(color.rgb, liveColor.rgb, 0.34);
+              color.rgb += prev.rgb * 0.02;
+              color.rgb = mix(color.rgb, liveColor.rgb, 0.62);
             } else if (uDatamosh > 2.0) {
               float glitchMode = step(2.6, uDatamosh);
-              color.rgb += prev.rgb * mix(0.025, 0.04, glitchMode);
-              color.rgb = mix(color.rgb, liveColor.rgb, mix(0.34, 0.3, glitchMode));
+              color.rgb += prev.rgb * mix(0.018, 0.028, glitchMode);
+              color.rgb = mix(color.rgb, liveColor.rgb, mix(0.46, 0.42, glitchMode));
             } else {
-              color.rgb += prev.rgb * max(0.0, uDatamosh - 1.0) * 0.055;
-              color.rgb = mix(color.rgb, liveColor.rgb, 0.2);
+              color.rgb += prev.rgb * max(0.0, uDatamosh - 1.0) * 0.035;
+              color.rgb = mix(color.rgb, liveColor.rgb, 0.34);
             }
+            color.rgb = max(color.rgb, stableLiveColor.rgb * 0.52);
+            color.a = 1.0;
           }
 
           // Scanlines
@@ -307,8 +316,8 @@ export class VisualizerScene {
       glitchNoise: boolean;
       datamosh: boolean;
       strongDatamosh?: boolean;
-      blockStrongDatamosh?: boolean;
-      blockGlitchDatamosh?: boolean;
+      blockDatamosh?: boolean;
+      glitchDatamosh?: boolean;
       meltingDatamosh?: boolean;
       bloom: boolean;
       scanlines?: boolean;
@@ -375,9 +384,9 @@ export class VisualizerScene {
     this.postMaterial.uniforms.uGlitchNoise.value = effects.glitchNoise ? 1 : 0;
     this.postMaterial.uniforms.uDatamosh.value = effects.meltingDatamosh
       ? 3.2
-      : effects.blockGlitchDatamosh
+      : effects.glitchDatamosh
         ? 2.75
-        : effects.blockStrongDatamosh
+        : effects.blockDatamosh
           ? 2.4
           : effects.strongDatamosh
             ? 1.6
@@ -633,8 +642,8 @@ function createRandomShapeCloud(
   const group = new THREE.Group();
 
   for (let i = 0; i < count; i++) {
-    const size = 0.14 + Math.random() * 0.52;
-    const depth = 0.08 + Math.random() * 0.34;
+    const size = 0.07 + Math.random() * 0.26;
+    const depth = 0.035 + Math.random() * 0.17;
     const geo = createRandomShapeGeometry(size, depth);
 
     // Mix between two colors
