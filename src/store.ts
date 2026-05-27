@@ -87,7 +87,7 @@ export const useStore = create<AppState>((set) => ({
   },
   isExporting: false,
   exportProgress: 0,
-  fps: 60,
+  fps: 30,
   isFullscreen: false,
 
   setAudioFile: (file) => set({ audioFile: file }),

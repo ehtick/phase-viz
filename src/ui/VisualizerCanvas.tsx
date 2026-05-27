@@ -12,6 +12,10 @@ interface Props {
   exportRendererRef: React.MutableRefObject<ExportFrameRenderer | null>;
 }
 
+const RENDER_FPS_LIMIT = 30;
+const RENDER_FRAME_INTERVAL_MS = 1000 / RENDER_FPS_LIMIT;
+const EXPORT_FPS_LIMIT = 30;
+
 export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<VisualizerScene | null>(null);
@@ -22,6 +26,7 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
   const startTimeRef = useRef<number>(0);
   const audioStartedRef = useRef<number>(0);
   const lastFrameTime = useRef<number>(0);
+  const lastRenderTimeRef = useRef<number>(0);
   const fpsCountRef = useRef<number[]>([]);
 
   const {
@@ -121,15 +126,23 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
       if (!scene) return;
       if (isExporting || useStore.getState().isExporting) {
         lastFrameTime.current = timestamp;
+        lastRenderTimeRef.current = timestamp;
         return;
       }
 
-      const dt = Math.min((timestamp - lastFrameTime.current) / 1000, 0.05);
-      lastFrameTime.current = timestamp;
+      const elapsedSinceRender = timestamp - lastRenderTimeRef.current;
+      if (elapsedSinceRender < RENDER_FRAME_INTERVAL_MS) {
+        return;
+      }
+
+      const renderTimestamp = timestamp - (elapsedSinceRender % RENDER_FRAME_INTERVAL_MS);
+      const dt = Math.min((renderTimestamp - lastFrameTime.current) / 1000, 0.05);
+      lastFrameTime.current = renderTimestamp;
+      lastRenderTimeRef.current = renderTimestamp;
 
       // FPS tracking
-      fpsCountRef.current.push(timestamp);
-      fpsCountRef.current = fpsCountRef.current.filter((t) => timestamp - t < 1000);
+      fpsCountRef.current.push(renderTimestamp);
+      fpsCountRef.current = fpsCountRef.current.filter((t) => renderTimestamp - t < 1000);
       if (fpsCountRef.current.length % 30 === 0) {
         setFps(fpsCountRef.current.length);
       }
@@ -176,7 +189,7 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
         }
       } else if (analysis) {
         // Preview from analysis data when not playing
-        const t = (timestamp / 1000) % (analysis.duration || 60);
+        const t = (renderTimestamp / 1000) % (analysis.duration || 60);
         const frame = Math.floor((t / analysis.duration) * analysis.spectrum.length);
         const spectrum = analysis.spectrum[Math.min(frame, analysis.spectrum.length - 1)];
         if (spectrum) {
@@ -233,7 +246,7 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
   );
 
   const renderExportFrames = useCallback<ExportFrameRenderer>(
-    async ({ duration, fps, onProgress, signal }) => {
+    async ({ duration, onProgress, signal }) => {
       const scene = sceneRef.current;
       const recorder = recorderRef.current;
       const canvas = canvasRef.current;
@@ -241,6 +254,7 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
         throw new Error('Visualizer is not ready for export');
       }
 
+      const fps = EXPORT_FPS_LIMIT;
       throwIfAborted(signal);
       const drawFrame = (time: number, frame: number) => {
         const data = sampleAnalysisFrame(analysis, time);
@@ -302,7 +316,9 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
   }, [exportRendererRef, renderExportFrames]);
 
   useEffect(() => {
-    lastFrameTime.current = performance.now();
+    const now = performance.now();
+    lastFrameTime.current = now;
+    lastRenderTimeRef.current = now;
     const tick = (timestamp: number) => {
       renderFrame(timestamp);
       rafRef.current = requestAnimationFrame(tick);
