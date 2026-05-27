@@ -43,6 +43,10 @@ export interface AppState {
   effects: EffectSettings;
   isExporting: boolean;
   exportProgress: number;
+  exportError: string | null;
+  exportStatus: string | null;
+  exportDownloadUrl: string | null;
+  exportDownloadName: string;
   fps: number;
   isFullscreen: boolean;
 
@@ -58,6 +62,9 @@ export interface AppState {
   toggleEffect: (e: keyof EffectSettings) => void;
   setIsExporting: (v: boolean) => void;
   setExportProgress: (p: number) => void;
+  setExportError: (message: string | null) => void;
+  setExportStatus: (message: string | null) => void;
+  setExportDownload: (url: string | null, fileName?: string) => void;
   setFps: (f: number) => void;
   setIsFullscreen: (v: boolean) => void;
 }
@@ -87,6 +94,10 @@ export const useStore = create<AppState>((set) => ({
   },
   isExporting: false,
   exportProgress: 0,
+  exportError: null,
+  exportStatus: null,
+  exportDownloadUrl: null,
+  exportDownloadName: 'audio-visualizer.mp4',
   fps: 30,
   isFullscreen: false,
 
@@ -103,6 +114,10 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({ effects: { ...s.effects, [e]: !s.effects[e] } })),
   setIsExporting: (isExporting) => set({ isExporting }),
   setExportProgress: (exportProgress) => set({ exportProgress }),
+  setExportError: (exportError) => set({ exportError }),
+  setExportStatus: (exportStatus) => set({ exportStatus }),
+  setExportDownload: (exportDownloadUrl, exportDownloadName = 'audio-visualizer.mp4') =>
+    set({ exportDownloadUrl, exportDownloadName }),
   setFps: (fps) => set({ fps }),
   setIsFullscreen: (isFullscreen) => set({ isFullscreen }),
 }));

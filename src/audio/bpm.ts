@@ -14,13 +14,16 @@ export function detectBPM(channelData: Float32Array, sampleRate: number): number
   // Detect onsets by finding peaks above local average
   const onsets: number[] = [];
   const historyLen = 43;
+  let rollingEnergy = 0;
+  for (let i = 0; i < Math.min(historyLen, energies.length); i++) {
+    rollingEnergy += energies[i];
+  }
   for (let i = historyLen; i < energies.length; i++) {
-    let avg = 0;
-    for (let k = i - historyLen; k < i; k++) avg += energies[k];
-    avg /= historyLen;
+    const avg = rollingEnergy / historyLen;
     if (energies[i] > avg * 1.5 && energies[i] > 0.001) {
       onsets.push(i);
     }
+    rollingEnergy += energies[i] - energies[i - historyLen];
   }
 
   if (onsets.length < 2) return 120;

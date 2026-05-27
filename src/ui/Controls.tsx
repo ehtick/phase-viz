@@ -6,6 +6,7 @@ import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Switch from '@mui/material/Switch';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Button from '@mui/material/Button';
+import Alert from '@mui/material/Alert';
 import Divider from '@mui/material/Divider';
 import Chip from '@mui/material/Chip';
 import LinearProgress from '@mui/material/LinearProgress';
@@ -41,6 +42,10 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     analysis,
     isExporting,
     exportProgress,
+    exportError,
+    exportStatus,
+    exportDownloadUrl,
+    exportDownloadName,
     fps,
     setPreset,
     toggleEffect,
@@ -139,7 +144,7 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
       {isExporting ? (
         <Box sx={{ px: 0.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-            Exporting... {Math.round(exportProgress * 100)}%
+            {exportStatus ?? 'Exporting...'} {Math.round(exportProgress * 100)}%
           </Typography>
           <LinearProgress variant="determinate" value={exportProgress * 100} />
           <Button
@@ -155,27 +160,49 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
           </Button>
         </Box>
       ) : (
-        <Tooltip title={!analysis ? 'Upload audio first' : 'Export 1080p MP4'}>
-          <span>
-            <Button
-              variant="contained"
-              fullWidth
-              size="small"
-              startIcon={<FileDownloadIcon />}
-              disabled={!analysis}
-              onClick={onExport}
-              sx={{
-                background: analysis
-                  ? 'linear-gradient(135deg, #00bcd4 0%, #009688 100%)'
-                  : undefined,
-                fontWeight: 600,
-                py: 1,
-              }}
-            >
-              Export MP4
-            </Button>
-          </span>
-        </Tooltip>
+        <Box sx={{ px: 0.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {exportError && (
+            <Alert severity="error" variant="outlined" sx={{ fontSize: 10, py: 0.25 }}>
+              {exportError}
+            </Alert>
+          )}
+          {exportDownloadUrl && (
+            <Tooltip title="Download the last completed MP4 again">
+              <Button
+                variant="outlined"
+                fullWidth
+                size="small"
+                startIcon={<FileDownloadIcon />}
+                href={exportDownloadUrl}
+                download={exportDownloadName}
+                sx={{ fontWeight: 600 }}
+              >
+                Download Ready
+              </Button>
+            </Tooltip>
+          )}
+          <Tooltip title={!analysis ? 'Upload audio first' : 'Export 1080p MP4'}>
+            <span>
+              <Button
+                variant="contained"
+                fullWidth
+                size="small"
+                startIcon={<FileDownloadIcon />}
+                disabled={!analysis}
+                onClick={onExport}
+                sx={{
+                  background: analysis
+                    ? 'linear-gradient(135deg, #00bcd4 0%, #009688 100%)'
+                    : undefined,
+                  fontWeight: 600,
+                  py: 1,
+                }}
+              >
+                Export MP4
+              </Button>
+            </span>
+          </Tooltip>
+        </Box>
       )}
     </Box>
   );

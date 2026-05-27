@@ -8,19 +8,24 @@ export function computeSpectrogram(
   const frames: Float32Array[] = [];
   const windowFn = hanningWindow(FFT_SIZE);
   const stepSamples = Math.floor(sampleRate / 30); // 30fps aligned
+  const bitReversal = createBitReversalTable(FFT_SIZE);
+  const real = new Float32Array(FFT_SIZE);
+  const imag = new Float32Array(FFT_SIZE);
 
   for (let offset = 0; offset + FFT_SIZE < channelData.length; offset += stepSamples) {
     const frame = new Float32Array(FFT_SIZE / 2);
-    const windowed = new Float32Array(FFT_SIZE);
 
     for (let i = 0; i < FFT_SIZE; i++) {
-      windowed[i] = (channelData[offset + i] ?? 0) * windowFn[i];
+      real[i] = (channelData[offset + i] ?? 0) * windowFn[i];
+      imag[i] = 0;
     }
 
-    // Simple DFT magnitude (using offline approach - real apps would use OfflineAudioContext)
-    const magnitudes = simpleDFTMagnitude(windowed, FFT_SIZE / 2);
+    fftInPlace(real, imag, bitReversal);
+
     for (let i = 0; i < FFT_SIZE / 2; i++) {
-      frame[i] = magnitudes[i];
+      const r = real[i];
+      const im = imag[i];
+      frame[i] = Math.sqrt(r * r + im * im) / FFT_SIZE;
     }
     frames.push(frame);
   }
@@ -36,23 +41,30 @@ function hanningWindow(size: number): Float32Array {
   return w;
 }
 
-function simpleDFTMagnitude(signal: Float32Array, numBins: number): Float32Array {
-  // Cooley-Tukey FFT (radix-2)
-  const n = signal.length;
-  const real = new Float32Array(n);
-  const imag = new Float32Array(n);
-
-  for (let i = 0; i < n; i++) real[i] = signal[i];
-
-  // Bit-reversal permutation
+function createBitReversalTable(size: number): Uint16Array {
+  const table = new Uint16Array(size);
   let j = 0;
-  for (let i = 1; i < n; i++) {
-    let bit = n >> 1;
+  for (let i = 0; i < size; i++) {
+    table[i] = j;
+    let bit = size >> 1;
     for (; j & bit; bit >>= 1) j ^= bit;
     j ^= bit;
+  }
+  return table;
+}
+
+function fftInPlace(real: Float32Array, imag: Float32Array, bitReversal: Uint16Array) {
+  const n = real.length;
+
+  for (let i = 0; i < n; i++) {
+    const j = bitReversal[i];
     if (i < j) {
-      [real[i], real[j]] = [real[j], real[i]];
-      [imag[i], imag[j]] = [imag[j], imag[i]];
+      const realTmp = real[i];
+      real[i] = real[j];
+      real[j] = realTmp;
+      const imagTmp = imag[i];
+      imag[i] = imag[j];
+      imag[j] = imagTmp;
     }
   }
 
@@ -78,12 +90,6 @@ function simpleDFTMagnitude(signal: Float32Array, numBins: number): Float32Array
       }
     }
   }
-
-  const mags = new Float32Array(numBins);
-  for (let i = 0; i < numBins; i++) {
-    mags[i] = Math.sqrt(real[i] ** 2 + imag[i] ** 2) / n;
-  }
-  return mags;
 }
 
 export function computeWaveform(channelData: Float32Array, points = 512): Float32Array {

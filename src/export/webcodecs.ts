@@ -12,8 +12,9 @@ interface WebCodecsExportOptions {
 
 const VIDEO_CODEC = 'avc1.42001f';
 const AUDIO_CODEC = 'mp4a.40.2';
-const AUDIO_CHUNK_SIZE = 8192;
-const MAX_VIDEO_QUEUE_SIZE = 24;
+const AUDIO_CHUNK_SIZE = 65536;
+const MAX_VIDEO_QUEUE_SIZE = 96;
+const PROGRESS_FRAME_INTERVAL = 45;
 
 export function canUseWebCodecsMP4() {
   return typeof VideoEncoder !== 'undefined'
@@ -30,7 +31,7 @@ export async function exportToMP4WithWebCodecs({
   renderFrame,
   onProgress,
   signal,
-}: WebCodecsExportOptions): Promise<void> {
+}: WebCodecsExportOptions): Promise<Blob> {
   throwIfAborted(signal);
 
   const width = makeEven(canvas.width || canvas.clientWidth);
@@ -51,22 +52,44 @@ export async function exportToMP4WithWebCodecs({
     },
   });
 
+  let videoChunkCount = 0;
+  let audioChunkCount = 0;
+  let encoderError: Error | null = null;
+  const setEncoderError = (err: unknown) => {
+    encoderError = toError(err);
+  };
+  const throwEncoderError = () => {
+    if (encoderError) throw encoderError;
+  };
+
   const videoEncoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-    error: (err) => {
-      throw err;
+    output: (chunk, meta) => {
+      if (encoderError) return;
+      try {
+        muxer.addVideoChunk(chunk, meta);
+        videoChunkCount++;
+      } catch (err) {
+        setEncoderError(err);
+      }
     },
+    error: setEncoderError,
   });
   const audioEncoder = new AudioEncoder({
-    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-    error: (err) => {
-      throw err;
+    output: (chunk, meta) => {
+      if (encoderError) return;
+      try {
+        muxer.addAudioChunk(chunk, meta);
+        audioChunkCount++;
+      } catch (err) {
+        setEncoderError(err);
+      }
     },
+    error: setEncoderError,
   });
 
   const abortEncoding = () => {
-    videoEncoder.close();
-    audioEncoder.close();
+    closeEncoder(videoEncoder);
+    closeEncoder(audioEncoder);
   };
   signal?.addEventListener('abort', abortEncoding, { once: true });
 
@@ -75,6 +98,7 @@ export async function exportToMP4WithWebCodecs({
 
     let videoProgress = 0;
     let audioProgress = 0;
+    let audioPromiseError: Error | null = null;
     const updateEncodeProgress = () => {
       onProgress(Math.min(0.94, videoProgress * 0.78 + audioProgress * 0.16));
     };
@@ -82,14 +106,18 @@ export async function exportToMP4WithWebCodecs({
       await encodeAudio(audioEncoder, audioBuffer, (p) => {
         audioProgress = p;
         updateEncodeProgress();
-      }, signal);
-      await audioEncoder.flush();
+      }, throwEncoderError, signal);
+      await withTimeout(audioEncoder.flush(), 30_000, 'Audio encoder flush timed out');
       audioProgress = 1;
       updateEncodeProgress();
-    })();
+    })().catch((err) => {
+      audioPromiseError = toError(err);
+      setEncoderError(audioPromiseError);
+    });
 
     for (let frame = 0; frame < totalFrames; frame++) {
       throwIfAborted(signal);
+      throwEncoderError();
       const time = frame / fps;
       renderFrame(time, frame);
 
@@ -100,31 +128,50 @@ export async function exportToMP4WithWebCodecs({
         timestamp: Math.round(time * 1_000_000),
         duration: Math.round(1_000_000 / fps),
       });
-      videoEncoder.encode(videoFrame, { keyFrame: frame % (fps * 2) === 0 });
+      videoEncoder.encode(videoFrame, { keyFrame: frame === 0 || frame % (fps * 10) === 0 });
       videoFrame.close();
 
       if (videoEncoder.encodeQueueSize > MAX_VIDEO_QUEUE_SIZE) {
-        await waitForVideoQueue(videoEncoder, Math.floor(MAX_VIDEO_QUEUE_SIZE / 2), signal);
+        await waitForVideoQueue(
+          videoEncoder,
+          Math.floor(MAX_VIDEO_QUEUE_SIZE * 0.65),
+          throwEncoderError,
+          signal,
+        );
       }
 
-      if (frame % 10 === 0 || frame === totalFrames - 1) {
+      if (frame % PROGRESS_FRAME_INTERVAL === 0 || frame === totalFrames - 1) {
         videoProgress = (frame + 1) / totalFrames;
         updateEncodeProgress();
         await yieldToBrowser();
       }
     }
 
-    await videoEncoder.flush();
+    await withTimeout(videoEncoder.flush(), 45_000, 'Video encoder flush timed out');
+    throwEncoderError();
     videoProgress = 1;
     updateEncodeProgress();
     await audioPromise;
+    if (audioPromiseError) throw audioPromiseError;
+    throwEncoderError();
+
+    if (videoChunkCount < totalFrames) {
+      throw new Error(`Video encoder stopped early (${videoChunkCount}/${totalFrames} frames)`);
+    }
+    if (audioChunkCount === 0) {
+      throw new Error('Audio encoder produced no chunks');
+    }
 
     throwIfAborted(signal);
     muxer.finalize();
     onProgress(0.97);
 
-    downloadBlob(new Blob([target.buffer], { type: 'video/mp4' }), 'audio-visualizer.mp4');
+    if (target.buffer.byteLength < 1024) {
+      throw new Error('Export finished without a valid MP4 payload');
+    }
+
     onProgress(1);
+    return new Blob([target.buffer], { type: 'video/mp4' });
   } finally {
     signal?.removeEventListener('abort', abortEncoding);
     closeEncoder(videoEncoder);
@@ -144,7 +191,7 @@ async function configureEncoders(
     codec: VIDEO_CODEC,
     width,
     height,
-    bitrate: Math.min(16_000_000, Math.max(4_000_000, width * height * fps * 0.16)),
+    bitrate: Math.min(8_000_000, Math.max(2_000_000, width * height * fps * 0.08)),
     framerate: fps,
     avc: { format: 'avc' },
   };
@@ -164,7 +211,7 @@ async function configureEncoders(
     codec: AUDIO_CODEC,
     sampleRate: audioBuffer.sampleRate,
     numberOfChannels: audioBuffer.numberOfChannels,
-    bitrate: 192_000,
+    bitrate: 160_000,
   };
 
   const [supportedVideoConfig, audioSupport] = await Promise.all([
@@ -194,6 +241,7 @@ async function encodeAudio(
   encoder: AudioEncoder,
   buffer: AudioBuffer,
   onProgress: (progress: number) => void,
+  throwEncoderError: () => void,
   signal?: AbortSignal,
 ) {
   const channels = buffer.numberOfChannels;
@@ -202,6 +250,7 @@ async function encodeAudio(
 
   for (let start = 0; start < buffer.length; start += AUDIO_CHUNK_SIZE) {
     throwIfAborted(signal);
+    throwEncoderError();
     const frames = Math.min(AUDIO_CHUNK_SIZE, buffer.length - start);
     const data = new Float32Array(frames * channels);
 
@@ -219,9 +268,11 @@ async function encodeAudio(
     });
     encoder.encode(audioData);
     audioData.close();
+    throwEncoderError();
 
     if (encoder.encodeQueueSize > 16) {
-      await encoder.flush();
+      await withTimeout(encoder.flush(), 30_000, 'Audio encoder stalled');
+      throwEncoderError();
     }
     if (start % (AUDIO_CHUNK_SIZE * 16) === 0 || start + frames >= buffer.length) {
       onProgress((start + frames) / buffer.length);
@@ -233,10 +284,20 @@ async function encodeAudio(
 async function waitForVideoQueue(
   encoder: VideoEncoder,
   targetSize: number,
+  throwEncoderError: () => void,
   signal?: AbortSignal,
 ) {
+  let lastQueueSize = encoder.encodeQueueSize;
+  let lastQueueChangeAt = performance.now();
   while (encoder.encodeQueueSize > targetSize) {
     throwIfAborted(signal);
+    throwEncoderError();
+    if (encoder.encodeQueueSize < lastQueueSize) {
+      lastQueueSize = encoder.encodeQueueSize;
+      lastQueueChangeAt = performance.now();
+    } else if (performance.now() - lastQueueChangeAt > 15_000) {
+      throw new Error(`Video encoder stalled with ${encoder.encodeQueueSize} frames queued`);
+    }
     await yieldToBrowser();
   }
 }
@@ -254,13 +315,16 @@ function closeEncoder(encoder: VideoEncoder | AudioEncoder) {
   }
 }
 
-function downloadBlob(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+function toError(err: unknown) {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId));
 }
 
 function makeEven(value: number) {

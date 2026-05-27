@@ -30,13 +30,17 @@ export class VisualizerScene {
   private cameraAngle = 0;
   private bloomStrength = 0;
   private datamoshAmount = 0;
+  private postEffectActive = true;
   private wasDatamoshActive = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: false,
+      alpha: false,
+      powerPreference: 'high-performance',
       preserveDrawingBuffer: false,
+      stencil: false,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(canvas.clientWidth, canvas.clientHeight);
@@ -58,10 +62,10 @@ export class VisualizerScene {
     // Render targets for post-processing
     const w = canvas.clientWidth || 1920;
     const h = canvas.clientHeight || 1080;
-    this.rtA = new THREE.WebGLRenderTarget(w, h);
-    this.rtB = new THREE.WebGLRenderTarget(w, h);
-    this.rtPrevFrame = new THREE.WebGLRenderTarget(w, h);
-    this.rtFinalFrame = new THREE.WebGLRenderTarget(w, h);
+    this.rtA = new THREE.WebGLRenderTarget(w, h, { stencilBuffer: false });
+    this.rtB = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false, stencilBuffer: false });
+    this.rtPrevFrame = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false, stencilBuffer: false });
+    this.rtFinalFrame = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false, stencilBuffer: false });
 
     // Post-processing quad
     this.postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -401,10 +405,23 @@ export class VisualizerScene {
     this.postMaterial.uniforms.uTransient.value = transient;
     this.datamoshAmount = datamoshAmount;
     this.bloomStrength = bloomStrength;
+    this.postEffectActive = this.bloomStrength > 0.001
+      || datamoshAmount > 0
+      || effects.rgbSplit
+      || effects.chromaticAberration
+      || effects.glitchNoise
+      || Boolean(effects.scanlines);
     this.bloomPass.setStrength(bloomStrength);
   }
 
   render() {
+    if (!this.postEffectActive) {
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.scene, this.camera);
+      this.wasDatamoshActive = false;
+      return;
+    }
+
     // 1. Render scene → rtA
     this.renderer.setRenderTarget(this.rtA);
     this.renderer.render(this.scene, this.camera);
@@ -456,6 +473,30 @@ export class VisualizerScene {
     this.bloomPass.setSize(width, height);
 
     this.updateBackgroundTextureCover();
+  }
+
+  getPixelRatio() {
+    return this.renderer.getPixelRatio();
+  }
+
+  setPixelRatio(pixelRatio: number) {
+    const canvas = this.renderer.domElement;
+    const width = canvas.parentElement?.clientWidth || canvas.clientWidth || 1;
+    const height = canvas.parentElement?.clientHeight || canvas.clientHeight || 1;
+    this.renderer.setPixelRatio(pixelRatio);
+    this.resize(width, height);
+  }
+
+  resetExportState() {
+    this.time = 0;
+    this.cameraAngle = 0;
+    this.wasDatamoshActive = false;
+    const previousTarget = this.renderer.getRenderTarget();
+    this.renderer.setRenderTarget(this.rtPrevFrame);
+    this.renderer.clear();
+    this.renderer.setRenderTarget(this.rtFinalFrame);
+    this.renderer.clear();
+    this.renderer.setRenderTarget(previousTarget);
   }
 
   setBackgroundImage(url: string | null) {
@@ -536,8 +577,8 @@ class BloomPass {
   private strength = 1.0;
 
   constructor(w: number, h: number) {
-    this.rtBlurA = new THREE.WebGLRenderTarget(w / 4, h / 4);
-    this.rtBlurB = new THREE.WebGLRenderTarget(w / 4, h / 4);
+    this.rtBlurA = new THREE.WebGLRenderTarget(w / 4, h / 4, { depthBuffer: false, stencilBuffer: false });
+    this.rtBlurB = new THREE.WebGLRenderTarget(w / 4, h / 4, { depthBuffer: false, stencilBuffer: false });
     this.blurCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.blurScene = new THREE.Scene();
 
@@ -657,18 +698,20 @@ function createWaveformLine(color: THREE.Color, points: number): THREE.Line {
 }
 
 function updateWaveformLine(line: THREE.Line, data: Float32Array) {
-  const positions = line.geometry.attributes.position as THREE.BufferAttribute;
-  const count = Math.min(positions.count, data.length);
+  const attribute = line.geometry.attributes.position as THREE.BufferAttribute;
+  const positions = attribute.array as Float32Array;
+  const count = Math.min(attribute.count, data.length);
   const spread = 4;
 
   for (let i = 0; i < count; i++) {
-    const x = (i / count - 0.5) * spread;
-    const y = (data[Math.floor((i / count) * data.length)] ?? 0) * 2;
-    const phase = (i / count) * Math.PI * 4;
-    const z = Math.sin(phase) * 0.45 + y * 0.18;
-    positions.setXYZ(i, x, y, z);
+    const progress = i / count;
+    const y = (data[Math.floor(progress * data.length)] ?? 0) * 2;
+    const offset = i * 3;
+    positions[offset] = (progress - 0.5) * spread;
+    positions[offset + 1] = y;
+    positions[offset + 2] = Math.sin(progress * Math.PI * 4) * 0.45 + y * 0.18;
   }
-  positions.needsUpdate = true;
+  attribute.needsUpdate = true;
 }
 
 function createRandomShapeCloud(

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Box from '@mui/material/Box';
@@ -16,14 +16,33 @@ import Controls from './ui/Controls';
 import VisualizerCanvas from './ui/VisualizerCanvas';
 import Timeline from './ui/Timeline';
 import type { ExportFrameRenderer, FrameRecorder } from './export/recorder';
+import { DEFAULT_EXPORT_FILE_NAME, triggerBlobDownload } from './export/download';
 
 export default function App() {
   const recorderRef = useRef<FrameRecorder | null>(null);
   const exportRendererRef = useRef<ExportFrameRenderer | null>(null);
   const exportAbortRef = useRef<AbortController | null>(null);
+  const lastExportUrlRef = useRef<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const { audioBuffer, analysis, isExporting, isFullscreen, setIsFullscreen, setIsExporting, setExportProgress } = useStore();
+  const {
+    audioBuffer,
+    analysis,
+    isExporting,
+    isFullscreen,
+    setIsFullscreen,
+    setIsExporting,
+    setExportProgress,
+    setExportError,
+    setExportStatus,
+    setExportDownload,
+  } = useStore();
+
+  useEffect(() => () => {
+    if (lastExportUrlRef.current) {
+      URL.revokeObjectURL(lastExportUrlRef.current);
+    }
+  }, []);
 
   const handleExport = async () => {
     if (isExporting || !audioBuffer || !analysis || !exportRendererRef.current) return;
@@ -32,20 +51,48 @@ export default function App() {
     exportAbortRef.current = abortController;
     setIsExporting(true);
     setExportProgress(0);
+    setExportError(null);
+    setExportStatus('Preparing export...');
+    if (lastExportUrlRef.current) {
+      URL.revokeObjectURL(lastExportUrlRef.current);
+      lastExportUrlRef.current = null;
+    }
+    setExportDownload(null);
 
     const fps = 30;
+    let lastProgress = 0;
+    let lastProgressAt = 0;
+    const reportProgress = (progress: number) => {
+      const now = performance.now();
+      if (progress <= 0 || progress >= 1 || progress - lastProgress >= 0.01 || now - lastProgressAt >= 120) {
+        lastProgress = progress;
+        lastProgressAt = now;
+        setExportProgress(progress);
+      }
+    };
 
     try {
-      await exportRendererRef.current({
+      const blob = await exportRendererRef.current({
         duration: analysis.duration,
         fps,
         signal: abortController.signal,
-        onProgress: setExportProgress,
+        onProgress: reportProgress,
+        onStatus: setExportStatus,
       });
 
-      setExportProgress(0);
+      if (blob.size < 1024) {
+        throw new Error('Export finished without a valid MP4 payload');
+      }
+
+      const url = URL.createObjectURL(blob);
+      lastExportUrlRef.current = url;
+      setExportDownload(url, DEFAULT_EXPORT_FILE_NAME);
+      setExportStatus('Download ready');
+      triggerBlobDownload(url, DEFAULT_EXPORT_FILE_NAME);
+      reportProgress(1);
     } catch (err) {
       if (!abortController.signal.aborted && !isAbortError(err)) {
+        setExportError(getErrorMessage(err));
         console.error('Export failed:', err);
       }
     } finally {
@@ -54,6 +101,7 @@ export default function App() {
       }
       setIsExporting(false);
       setExportProgress(0);
+      setExportStatus(null);
     }
   };
 
@@ -239,6 +287,10 @@ export default function App() {
 
 function isAbortError(err: unknown) {
   return err instanceof DOMException && err.name === 'AbortError';
+}
+
+function getErrorMessage(err: unknown) {
+  return err instanceof Error ? err.message : 'Export failed unexpectedly';
 }
 
 function WaveformMini({ waveform }: { waveform: Float32Array }) {

@@ -7,10 +7,11 @@ export interface ExportRenderOptions {
   duration: number;
   fps: number;
   onProgress: (progress: number) => void;
+  onStatus?: (status: string) => void;
   signal?: AbortSignal;
 }
 
-export type ExportFrameRenderer = (options: ExportRenderOptions) => Promise<void>;
+export type ExportFrameRenderer = (options: ExportRenderOptions) => Promise<Blob>;
 
 export class FrameRecorder {
   private frames: RecorderFrame[] = [];
@@ -21,14 +22,18 @@ export class FrameRecorder {
   }
 
   captureFrame(timeMs: number): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this.canvas.toBlob(
         (blob) => {
-          if (blob) this.frames.push({ blob, timeMs });
+          if (!blob) {
+            reject(new Error(`Could not capture export frame at ${Math.round(timeMs)}ms`));
+            return;
+          }
+          this.frames.push({ blob, timeMs });
           resolve();
         },
-        'image/webp',
-        0.8,
+        'image/jpeg',
+        0.72,
       );
     });
   }

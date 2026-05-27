@@ -61,15 +61,16 @@ function detectTransients(channelData: Float32Array, sampleRate: number): number
   }
 
   const transients: number[] = [];
+  let maxTransient = 0.001;
   for (let i = 1; i < numFrames; i++) {
     const delta = energies[i] - energies[i - 1];
-    transients.push(Math.max(0, delta * 20));
+    const transient = Math.max(0, delta * 20);
+    if (transient > maxTransient) maxTransient = transient;
+    transients.push(transient);
   }
   transients.unshift(0);
 
-  // Normalize
-  const max = Math.max(...transients, 0.001);
-  return transients.map((v) => v / max);
+  return transients.map((v) => v / maxTransient);
 }
 
 function computeStereoWidth(left: Float32Array, right: Float32Array): number {
