@@ -111,12 +111,18 @@ export class VisualizerScene {
             vec2 grid = vec2(18.0, 11.0);
             vec2 block = floor(uv * grid);
             float blockNoise = rand(block + floor(uTime * 5.0));
-            float blockGate = step(0.54, blockNoise);
+            float glitchMode = step(2.6, uDatamosh);
+            float blockGate = step(mix(0.58, 0.48, glitchMode), blockNoise);
             vec2 blockOffset = vec2(
-              (blockNoise - 0.5) * 0.15,
-              (rand(block.yx + floor(uTime * 4.0)) - 0.5) * 0.075
+              (blockNoise - 0.5) * mix(0.11, 0.17, glitchMode),
+              (rand(block.yx + floor(uTime * 4.0)) - 0.5) * mix(0.045, 0.075, glitchMode)
             );
-            uv += blockOffset * blockGate * (0.45 + uTransient * 0.55);
+            uv += blockOffset * blockGate * (0.36 + uTransient * 0.42);
+            if (glitchMode > 0.5) {
+              float strip = floor(uv.y * 42.0);
+              float stripNoise = rand(vec2(strip, floor(uTime * 14.0)));
+              uv.x += (stripNoise - 0.5) * 0.035 * step(0.74, stripNoise);
+            }
           } else if (uDatamosh > 1.0 && uDatamosh < 3.0) {
             float blockY = floor(uv.y * mix(18.0, 52.0, uTransient));
             float blockNoise = rand(vec2(blockY, floor(uTime * 7.0)));
@@ -128,10 +134,10 @@ export class VisualizerScene {
           if (uDatamosh >= 3.0) {
             float column = floor(uv.x * 44.0);
             float slowNoise = rand(vec2(column, floor(uTime * 3.0)));
-            float drip = smoothstep(0.12, 1.0, slowNoise + uTransient * 0.55);
+            float drip = smoothstep(0.28, 1.0, slowNoise + uTransient * 0.34);
             float wave = sin(uv.y * 16.0 + uTime * 2.5 + slowNoise * 6.2831);
-            uv.x += wave * 0.018 * drip;
-            uv.y -= (0.025 + slowNoise * 0.075) * drip * (0.75 + uTransient);
+            uv.x += wave * 0.009 * drip;
+            uv.y -= (0.012 + slowNoise * 0.035) * drip * (0.55 + uTransient * 0.45);
           }
 
           // RGB Split
@@ -150,11 +156,12 @@ export class VisualizerScene {
               vec2 block = floor(uv * grid);
               vec2 blockCenter = (block + 0.5) / grid;
               float blockNoise = rand(block + floor(uTime * 6.0));
-              float blockGate = step(0.5, blockNoise);
-              prevUv = mix(prevUv, blockCenter, 0.42 * blockGate);
+              float glitchMode = step(2.6, uDatamosh);
+              float blockGate = step(mix(0.56, 0.48, glitchMode), blockNoise);
+              prevUv = mix(prevUv, blockCenter, mix(0.28, 0.34, glitchMode) * blockGate);
               prevUv += vec2(
-                (blockNoise - 0.5) * 0.11,
-                (rand(block.yx + floor(uTime * 5.0)) - 0.5) * 0.055
+                (blockNoise - 0.5) * mix(0.07, 0.1, glitchMode),
+                (rand(block.yx + floor(uTime * 5.0)) - 0.5) * mix(0.035, 0.055, glitchMode)
               ) * blockGate;
             } else if (uDatamosh > 1.0 && uDatamosh < 3.0) {
               float cell = floor(uv.y * 34.0);
@@ -162,18 +169,20 @@ export class VisualizerScene {
             } else if (uDatamosh >= 3.0) {
               float column = floor(uv.x * 38.0);
               float flow = rand(vec2(column, floor(uTime * 2.0)));
-              prevUv.y -= 0.045 + flow * 0.11 + uTransient * 0.05;
-              prevUv.x += sin(uv.y * 20.0 + uTime * 4.0 + flow * 8.0) * 0.02;
+              prevUv.y -= 0.018 + flow * 0.045 + uTransient * 0.025;
+              prevUv.x += sin(uv.y * 20.0 + uTime * 4.0 + flow * 8.0) * 0.012;
             }
             vec4 prev = texture2D(tPrev, prevUv);
-            float smear = uDatamosh >= 3.0 ? 0.9 : uDatamosh > 2.0 ? 0.48 + uTransient * 0.06 : uDatamosh > 1.0 ? 0.56 + uTransient * 0.08 : 0.42;
+            float smear = uDatamosh >= 3.0 ? 0.42 + uTransient * 0.05 : uDatamosh > 2.6 ? 0.44 + uTransient * 0.05 : uDatamosh > 2.0 ? 0.38 + uTransient * 0.04 : uDatamosh > 1.0 ? 0.5 + uTransient * 0.06 : 0.36;
             color = mix(color, prev, smear);
             if (uDatamosh >= 3.0) {
-              color.rgb = mix(color.rgb, vec3(color.r * 0.85, color.g * 1.08, color.b * 1.18), 0.35);
-              color.rgb += prev.rgb * 0.18;
+              color.rgb = mix(color.rgb, vec3(color.r * 0.92, color.g * 1.03, color.b * 1.08), 0.18);
+              color.rgb += prev.rgb * 0.035;
+              color.rgb = mix(color.rgb, liveColor.rgb, 0.34);
             } else if (uDatamosh > 2.0) {
-              color.rgb += prev.rgb * 0.045;
-              color.rgb = mix(color.rgb, liveColor.rgb, 0.24);
+              float glitchMode = step(2.6, uDatamosh);
+              color.rgb += prev.rgb * mix(0.025, 0.04, glitchMode);
+              color.rgb = mix(color.rgb, liveColor.rgb, mix(0.34, 0.3, glitchMode));
             } else {
               color.rgb += prev.rgb * max(0.0, uDatamosh - 1.0) * 0.055;
               color.rgb = mix(color.rgb, liveColor.rgb, 0.2);
@@ -299,6 +308,7 @@ export class VisualizerScene {
       datamosh: boolean;
       strongDatamosh?: boolean;
       blockStrongDatamosh?: boolean;
+      blockGlitchDatamosh?: boolean;
       meltingDatamosh?: boolean;
       bloom: boolean;
       scanlines?: boolean;
@@ -329,8 +339,7 @@ export class VisualizerScene {
         const scaleMult = 1 + transient * 0.3 + bass * 0.15 * Math.sin(this.time * 2 + offset);
         mesh.scale.setScalar(scaleMult);
 
-        // Emissive intensity based on audio
-        mat.emissiveIntensity = 0.2 + bass * 0.6 + transient * 0.8;
+        mat.emissiveIntensity = 0;
       });
     }
 
@@ -340,7 +349,7 @@ export class VisualizerScene {
       const scale = 1 + transient * 0.4 + bass * 0.2;
       this.geometryMesh.scale.setScalar(scale);
       const mat = this.geometryMesh.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = 0.3 + bass * 0.8 + transient * 1.2;
+      mat.emissiveIntensity = 0;
     }
 
     // Camera orbit
@@ -366,13 +375,15 @@ export class VisualizerScene {
     this.postMaterial.uniforms.uGlitchNoise.value = effects.glitchNoise ? 1 : 0;
     this.postMaterial.uniforms.uDatamosh.value = effects.meltingDatamosh
       ? 3.2
-      : effects.blockStrongDatamosh
-        ? 2.4
-        : effects.strongDatamosh
-          ? 1.6
-          : effects.datamosh
-            ? 1
-            : 0;
+      : effects.blockGlitchDatamosh
+        ? 2.75
+        : effects.blockStrongDatamosh
+          ? 2.4
+          : effects.strongDatamosh
+            ? 1.6
+            : effects.datamosh
+              ? 1
+              : 0;
     this.postMaterial.uniforms.uScanlines.value = effects.scanlines ? 1 : 0;
     this.postMaterial.uniforms.uTransient.value = transient;
     this.bloomPass.setStrength(bloomStrength);
@@ -632,8 +643,8 @@ function createRandomShapeCloud(
 
     const mat = new THREE.MeshStandardMaterial({
       color,
-      emissive: color,
-      emissiveIntensity: 0.3,
+      emissive: new THREE.Color(0x000000),
+      emissiveIntensity: 0,
       metalness: 0.6,
       roughness: 0.3,
       side: THREE.DoubleSide,

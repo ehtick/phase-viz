@@ -23,6 +23,7 @@ export interface EffectSettings {
   datamosh: boolean;
   strongDatamosh: boolean;
   blockStrongDatamosh: boolean;
+  blockGlitchDatamosh: boolean;
   meltingDatamosh: boolean;
   glitchNoise: boolean;
   cameraShake: boolean;
@@ -73,12 +74,13 @@ export const useStore = create<AppState>((set) => ({
   preset: 'neon',
   presetRevision: 0,
   effects: {
-    bloom: true,
+    bloom: false,
     chromaticAberration: false,
     rgbSplit: false,
     datamosh: false,
     strongDatamosh: false,
     blockStrongDatamosh: false,
+    blockGlitchDatamosh: false,
     meltingDatamosh: false,
     glitchNoise: false,
     cameraShake: false,

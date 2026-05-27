@@ -18,12 +18,12 @@ import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import CancelIcon from '@mui/icons-material/Cancel';
 
 const EFFECT_LABELS: { key: keyof EffectSettings; label: string }[] = [
-  { key: 'bloom', label: 'Bloom' },
   { key: 'chromaticAberration', label: 'Chromatic' },
   { key: 'rgbSplit', label: 'RGB Split' },
   { key: 'datamosh', label: 'Datamosh' },
   { key: 'strongDatamosh', label: 'Strong Datamosh' },
   { key: 'blockStrongDatamosh', label: 'Block Strong' },
+  { key: 'blockGlitchDatamosh', label: 'Block + Glitch' },
   { key: 'meltingDatamosh', label: 'Melt Datamosh' },
   { key: 'glitchNoise', label: 'Glitch' },
   { key: 'cameraShake', label: 'Cam Shake' },

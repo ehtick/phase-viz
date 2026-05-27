@@ -26,7 +26,7 @@ export class ParticleSystem {
 
     for (let i = 0; i < count; i++) {
       phases[i] = Math.random() * Math.PI * 2;
-      sizes[i] = 0.5 + Math.random();
+      sizes[i] = 0.35 + Math.random() * 0.65;
     }
 
     this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -70,7 +70,7 @@ export class ParticleSystem {
           // High freq → Y ripple
           pos.y += sin(pos.x * 5.0 + uTime * 2.0 + aPhase) * uHigh * 0.5;
 
-          vBrightness = 0.3 + uBass * 0.5 + uMid * 0.3 + uHigh * 0.4;
+          vBrightness = 0.24 + uBass * 0.34 + uMid * 0.22 + uHigh * 0.24;
           vPosition = pos;
 
           vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
@@ -90,14 +90,14 @@ export class ParticleSystem {
           vec2 uv = gl_PointCoord - 0.5;
           float d = length(uv);
           if (d > 0.5) discard;
-          float alpha = (1.0 - d * 2.0) * vBrightness;
+          float alpha = (1.0 - smoothstep(0.18, 0.5, d)) * vBrightness;
           float t = length(vPosition) * 0.2;
           vec3 color = mix(uColorA, uColorB, clamp(t, 0.0, 1.0));
           gl_FragColor = vec4(color, alpha);
         }
       `,
       transparent: true,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       depthWrite: false,
     });
 
