@@ -249,6 +249,13 @@ export class VisualizerScene {
       this.particleSystem.setColors(preset.particleColor, preset.accentColor);
       this.particleSystem.setParticleSize(preset.particleSize);
       this.scene.add(this.particleSystem.points);
+
+      this.rectGroup = createRandomShapeCloud(
+        Math.max(80, Math.floor(preset.particleCount * 0.018)),
+        preset.particleColor,
+        preset.accentColor,
+      );
+      this.scene.add(this.rectGroup);
     } else {
       // Create particles behind geometry
       this.particleSystem = new ParticleSystem(Math.floor(preset.particleCount * 0.3));
@@ -600,7 +607,9 @@ function updateWaveformLine(line: THREE.Line, data: Float32Array) {
   for (let i = 0; i < count; i++) {
     const x = (i / count - 0.5) * spread;
     const y = (data[Math.floor((i / count) * data.length)] ?? 0) * 2;
-    positions.setXYZ(i, x, y, 0);
+    const phase = (i / count) * Math.PI * 4;
+    const z = Math.sin(phase) * 0.45 + y * 0.18;
+    positions.setXYZ(i, x, y, z);
   }
   positions.needsUpdate = true;
 }
@@ -613,9 +622,9 @@ function createRandomShapeCloud(
   const group = new THREE.Group();
 
   for (let i = 0; i < count; i++) {
-    const width = 0.1 + Math.random() * 0.5;
-    const height = 0.1 + Math.random() * 0.8;
-    const geo = createRandomShapeGeometry(width, height);
+    const size = 0.14 + Math.random() * 0.52;
+    const depth = 0.08 + Math.random() * 0.34;
+    const geo = createRandomShapeGeometry(size, depth);
 
     // Mix between two colors
     const t = Math.random();
@@ -662,21 +671,30 @@ function createRandomShapeCloud(
 }
 
 function createRandomShapeGeometry(width: number, height: number): THREE.BufferGeometry {
-  const radius = Math.max(width, height) * 0.5;
-  const shape = Math.floor(Math.random() * 6);
+  const radius = Math.max(width, height) * 0.55;
+  const shape = Math.floor(Math.random() * 8);
 
   switch (shape) {
     case 0:
-      return new THREE.PlaneGeometry(width, height);
+      return new THREE.BoxGeometry(width, height * (0.65 + Math.random() * 0.8), height);
     case 1:
-      return new THREE.CircleGeometry(radius, 3);
+      return new THREE.TetrahedronGeometry(radius * (0.9 + Math.random() * 0.45), 0);
     case 2:
-      return new THREE.CircleGeometry(radius, 5 + Math.floor(Math.random() * 4));
+      return new THREE.OctahedronGeometry(radius * (0.85 + Math.random() * 0.5), 0);
     case 3:
-      return new THREE.RingGeometry(radius * 0.45, radius, 4 + Math.floor(Math.random() * 5));
+      return new THREE.IcosahedronGeometry(radius * (0.75 + Math.random() * 0.45), 0);
     case 4:
-      return new THREE.BoxGeometry(width, height, 0.04 + Math.random() * 0.12);
+      return new THREE.DodecahedronGeometry(radius * (0.75 + Math.random() * 0.45), 0);
+    case 5:
+      return new THREE.ConeGeometry(radius, height * (1.3 + Math.random() * 1.5), 4 + Math.floor(Math.random() * 5));
+    case 6:
+      return new THREE.CylinderGeometry(
+        radius * (0.5 + Math.random() * 0.35),
+        radius * (0.5 + Math.random() * 0.35),
+        height * (1.1 + Math.random() * 1.4),
+        5 + Math.floor(Math.random() * 5),
+      );
     default:
-      return new THREE.TetrahedronGeometry(radius * (0.75 + Math.random() * 0.45), 0);
+      return new THREE.TorusGeometry(radius * 0.78, radius * 0.18, 6, 10 + Math.floor(Math.random() * 8));
   }
 }
