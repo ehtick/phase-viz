@@ -20,11 +20,14 @@ async function resolveCoreURLs(signal?: AbortSignal) {
   }
 
   try {
-    const res = await fetch(LOCAL_CORE, { method: 'HEAD', signal });
+    // Some proxies/networks behave differently for HEAD requests.
+    // Use GET to avoid Cloudflare 522/timeout edge cases.
+    const res = await fetch(LOCAL_CORE, { method: 'GET', signal });
     if (res.ok) return { coreURL: LOCAL_CORE, wasmURL: LOCAL_WASM };
   } catch {
     // ignore and fallback to remote sources
   }
+
 
   return createCoreURLs(CDN_BASE);
 }
@@ -55,35 +58,20 @@ async function getFFmpeg(signal?: AbortSignal): Promise<FFmpegType> {
     const ffmpeg = new FFmpeg();
     const urls = await resolveCoreURLs(signal);
 
-    // Debugging: log resolved URLs and attempt lightweight network checks
-    try {
-      console.log('[ffmpeg] resolved URLs', urls);
+    // NOTE: Do not run verbose network/debug checks in production.
+    // These can increase load and trigger Cloudflare 522 timeouts.
+    if (import.meta.env.DEV) {
       try {
+        console.log('[ffmpeg] resolved URLs', urls);
         const r = await fetch(urls.coreURL, { method: 'GET' });
-        console.log('[ffmpeg] core GET', r.status, r.headers.get('content-type'), r.headers.get('access-control-allow-origin'));
-      } catch (e) {
-        console.error('[ffmpeg] core GET failed', e);
-      }
-      try {
+        console.log('[ffmpeg] core GET', r.status);
         const r2 = await fetch(urls.wasmURL, { method: 'GET' });
-        console.log('[ffmpeg] wasm GET', r2.status, r2.headers.get('content-type'), r2.headers.get('access-control-allow-origin'));
+        console.log('[ffmpeg] wasm GET', r2.status);
       } catch (e) {
-        console.error('[ffmpeg] wasm GET failed', e);
+        console.warn('[ffmpeg] pre-load checks failed', e);
       }
-
-      // Try dynamic import of the core script to reproduce module import failures early.
-      try {
-        // dynamic import may execute the module; this is intended for debugging only.
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        await import(urls.coreURL);
-        console.log('[ffmpeg] dynamic import(core) succeeded');
-      } catch (e) {
-        console.error('[ffmpeg] dynamic import(core) failed', e);
-      }
-    } catch (e) {
-      console.warn('[ffmpeg] pre-load checks failed', e);
     }
+
 
     try {
       await ffmpeg.load({ coreURL: urls.coreURL, wasmURL: urls.wasmURL }, { signal });
