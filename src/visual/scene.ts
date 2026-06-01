@@ -39,7 +39,7 @@ export class VisualizerScene {
       antialias: false,
       alpha: false,
       powerPreference: 'high-performance',
-      preserveDrawingBuffer: false,
+      preserveDrawingBuffer: true,
       stencil: false,
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));

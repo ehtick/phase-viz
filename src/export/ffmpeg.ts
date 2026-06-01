@@ -172,6 +172,7 @@ export async function exportToMP4WithFFmpegFrames({
   const audioFile = `${exportId}-audio.wav`;
   const outputFile = `${exportId}-output.mp4`;
   const pendingWrites: Promise<void>[] = [];
+  const captureCanvas = document.createElement('canvas');
 
   const terminateOnAbort = async () => {
     const ffmpeg = await ffmpegPromise.catch(() => null);
@@ -191,7 +192,7 @@ export async function exportToMP4WithFFmpegFrames({
       throwIfAborted(signal);
       const time = frame / fps;
       renderFrame(time, frame);
-      const bytes = await captureCanvasJpeg(canvas, time * 1000);
+      const bytes = await captureCanvasJpeg(canvas, time * 1000, captureCanvas);
       throwIfAborted(signal);
 
       const frameFile = frameFiles[frame];
@@ -348,17 +349,53 @@ export async function exportToMP4(
   return outputBlob;
 }
 
-function captureCanvasJpeg(canvas: HTMLCanvasElement, timeMs: number): Promise<Uint8Array> {
+function captureCanvasJpeg(
+  sourceCanvas: HTMLCanvasElement,
+  timeMs: number,
+  captureCanvas: HTMLCanvasElement,
+): Promise<Uint8Array> {
+  const width = sourceCanvas.width || sourceCanvas.clientWidth;
+  const height = sourceCanvas.height || sourceCanvas.clientHeight;
+  if (width <= 0 || height <= 0) {
+    return Promise.reject(new Error(`Could not capture export frame at ${Math.round(timeMs)}ms: canvas is empty`));
+  }
+
+  if (captureCanvas.width !== width || captureCanvas.height !== height) {
+    captureCanvas.width = width;
+    captureCanvas.height = height;
+  }
+
+  const ctx = captureCanvas.getContext('2d', { alpha: false });
+  if (!ctx) {
+    return Promise.reject(new Error('Could not create export capture context'));
+  }
+
+  try {
+    ctx.drawImage(sourceCanvas, 0, 0, width, height);
+  } catch (err) {
+    return Promise.reject(new Error(`Could not capture export frame at ${Math.round(timeMs)}ms: ${getErrorMessage(err)}`));
+  }
+
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
+    const finish = (blob: Blob | null) => {
       if (!blob) {
-        reject(new Error(`Could not capture export frame at ${Math.round(timeMs)}ms`));
+        try {
+          resolve(dataURLToBytes(captureCanvas.toDataURL('image/jpeg', FALLBACK_FRAME_JPEG_QUALITY)));
+        } catch (err) {
+          reject(new Error(`Could not capture export frame at ${Math.round(timeMs)}ms: ${getErrorMessage(err)}`));
+        }
         return;
       }
       blob.arrayBuffer()
         .then((buffer) => resolve(new Uint8Array(buffer)))
         .catch(reject);
-    }, 'image/jpeg', FALLBACK_FRAME_JPEG_QUALITY);
+    };
+
+    try {
+      captureCanvas.toBlob(finish, 'image/jpeg', FALLBACK_FRAME_JPEG_QUALITY);
+    } catch (err) {
+      reject(new Error(`Could not capture export frame at ${Math.round(timeMs)}ms: ${getErrorMessage(err)}`));
+    }
   });
 }
 
@@ -473,6 +510,24 @@ function toUint8Array(rawData: Uint8Array | string) {
 
 function toError(err: unknown) {
   return err instanceof Error ? err : new Error(String(err));
+}
+
+function getErrorMessage(err: unknown) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function dataURLToBytes(dataURL: string) {
+  const commaIndex = dataURL.indexOf(',');
+  if (commaIndex < 0) {
+    throw new Error('Invalid image data URL');
+  }
+
+  const binary = atob(dataURL.slice(commaIndex + 1));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 function toArrayBuffer(uint8: Uint8Array): ArrayBuffer {
