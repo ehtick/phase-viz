@@ -2,6 +2,7 @@ import type { FFmpeg as FFmpegType } from '@ffmpeg/ffmpeg';
 import { FrameRecorder } from './recorder';
 
 const FFMPEG_CORE_VERSION = '0.12.10';
+const FALLBACK_FRAME_JPEG_QUALITY = 0.86;
 const LOCAL_CORE = '/vendor/ffmpeg-core.js';
 const LOCAL_WASM = '/vendor/ffmpeg-core.wasm';
 // ESM build is more compatible with Worker contexts than UMD
@@ -357,7 +358,7 @@ function captureCanvasJpeg(canvas: HTMLCanvasElement, timeMs: number): Promise<U
       blob.arrayBuffer()
         .then((buffer) => resolve(new Uint8Array(buffer)))
         .catch(reject);
-    }, 'image/jpeg', 0.64);
+    }, 'image/jpeg', FALLBACK_FRAME_JPEG_QUALITY);
   });
 }
 
@@ -376,14 +377,14 @@ async function encodeMP4WithFallbacks(
       args: createEncodeArgs(options, [
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
-        '-crf', '28',
+        '-crf', '23',
       ]),
     },
     {
       label: 'mpeg4',
       args: createEncodeArgs(options, [
         '-c:v', 'mpeg4',
-        '-q:v', '5',
+        '-q:v', '3',
       ]),
     },
   ];
@@ -418,7 +419,7 @@ function createEncodeArgs(
     '-frames:v', String(totalFrames),
     ...videoCodecArgs,
     '-c:a', 'aac',
-    '-b:a', '160k',
+    '-b:a', '192k',
     '-shortest',
     '-movflags', '+faststart',
     '-y',

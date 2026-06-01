@@ -191,7 +191,7 @@ async function configureEncoders(
     codec: VIDEO_CODEC,
     width,
     height,
-    bitrate: Math.min(8_000_000, Math.max(2_000_000, width * height * fps * 0.08)),
+    bitrate: Math.min(12_000_000, Math.max(4_000_000, width * height * fps * 0.16)),
     framerate: fps,
     avc: { format: 'avc' },
   };
@@ -211,7 +211,7 @@ async function configureEncoders(
     codec: AUDIO_CODEC,
     sampleRate: audioBuffer.sampleRate,
     numberOfChannels: audioBuffer.numberOfChannels,
-    bitrate: 160_000,
+    bitrate: 192_000,
   };
 
   const [supportedVideoConfig, audioSupport] = await Promise.all([

@@ -465,7 +465,7 @@ export class VisualizerScene {
   resize(width: number, height: number) {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
+    this.renderer.setSize(width, height, false);
     this.rtA.setSize(width, height);
     this.rtB.setSize(width, height);
     this.rtPrevFrame.setSize(width, height);

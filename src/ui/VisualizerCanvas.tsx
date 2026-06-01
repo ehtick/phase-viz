@@ -15,6 +15,8 @@ interface Props {
 const RENDER_FPS_LIMIT = 30;
 const RENDER_FRAME_INTERVAL_MS = 1000 / RENDER_FPS_LIMIT;
 const EXPORT_FPS_LIMIT = 30;
+const EXPORT_WIDTH = 1920;
+const EXPORT_HEIGHT = 1080;
 
 export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -256,7 +258,9 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
       const fps = EXPORT_FPS_LIMIT;
       const previousPixelRatio = scene.getPixelRatio();
       throwIfAborted(signal);
+      onStatus?.('Preparing 1080p export...');
       scene.setPixelRatio(1);
+      scene.resize(EXPORT_WIDTH, EXPORT_HEIGHT);
 
       try {
         const exportFrame = createReusableAnalysisFrame();
