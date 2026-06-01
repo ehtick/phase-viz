@@ -16,6 +16,9 @@ import { useStore } from '../store';
 import type {
   DisplayMode,
   EffectSettings,
+  ImageFxEffectKey,
+  ImageFxPreset,
+  ImageFxSettings,
   PresetId,
   WaveBackgroundMode,
   WaveVisualizerType,
@@ -35,6 +38,66 @@ const EFFECT_LABELS: { key: keyof EffectSettings; label: string }[] = [
   { key: 'meltingDatamosh', label: 'Melt Datamosh' },
   { key: 'glitchNoise', label: 'Glitch' },
   { key: 'cameraShake', label: 'Cam Shake' },
+];
+
+const IMAGE_FX_PRESETS: Record<ImageFxPreset, Omit<ImageFxSettings, 'preset'>> = {
+  clean: {
+    glow: 0.22,
+    blur: 0.06,
+    rgbShift: 0.06,
+    noise: 0.03,
+    distortion: 0.04,
+    pulse: 0.16,
+  },
+  glitch: {
+    glow: 0.34,
+    blur: 0.18,
+    rgbShift: 0.62,
+    noise: 0.54,
+    distortion: 0.5,
+    pulse: 0.42,
+  },
+  dreamy: {
+    glow: 0.72,
+    blur: 0.34,
+    rgbShift: 0.16,
+    noise: 0.12,
+    distortion: 0.2,
+    pulse: 0.48,
+  },
+  dark: {
+    glow: 0.18,
+    blur: 0.1,
+    rgbShift: 0.12,
+    noise: 0.28,
+    distortion: 0.18,
+    pulse: 0.26,
+  },
+  vhs: {
+    glow: 0.3,
+    blur: 0.24,
+    rgbShift: 0.46,
+    noise: 0.42,
+    distortion: 0.36,
+    pulse: 0.3,
+  },
+};
+
+const IMAGE_FX_PRESET_LABELS: { value: ImageFxPreset; label: string }[] = [
+  { value: 'clean', label: 'Clean' },
+  { value: 'glitch', label: 'Glitch' },
+  { value: 'dreamy', label: 'Dreamy' },
+  { value: 'dark', label: 'Dark' },
+  { value: 'vhs', label: 'VHS' },
+];
+
+const IMAGE_FX_SLIDERS: { key: ImageFxEffectKey; label: string }[] = [
+  { key: 'glow', label: 'Glow' },
+  { key: 'blur', label: 'Blur' },
+  { key: 'rgbShift', label: 'RGB Shift' },
+  { key: 'noise', label: 'Noise' },
+  { key: 'distortion', label: 'Distortion' },
+  { key: 'pulse', label: 'Pulse' },
 ];
 
 interface ControlsProps {
@@ -57,6 +120,7 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     fps,
     particleSettings,
     waveSettings,
+    imageFxSettings,
     backgroundImageUrl,
     setDisplayMode,
     setPreset,
@@ -65,6 +129,8 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     setParticleSizeScale,
     setWaveType,
     setWaveBackgroundMode,
+    setImageFxPreset,
+    setImageFxEffect,
   } = useStore();
   const activePreset = PRESETS[preset];
   const visibleParticleCount = Math.round(
@@ -91,12 +157,17 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
         >
           <ToggleButton value="visualizer3d" sx={{ justifyContent: 'flex-start', px: 1.5, py: 0.75 }}>
             <Typography variant="body2" sx={{ fontSize: 11, fontWeight: 600 }}>
-              3D Visualizer
+              3D Visualizer Mode
             </Typography>
           </ToggleButton>
           <ToggleButton value="wave" sx={{ justifyContent: 'flex-start', px: 1.5, py: 0.75 }}>
             <Typography variant="body2" sx={{ fontSize: 11, fontWeight: 600 }}>
               Wave Visualizer Mode
+            </Typography>
+          </ToggleButton>
+          <ToggleButton value="imageFx" sx={{ justifyContent: 'flex-start', px: 1.5, py: 0.75 }}>
+            <Typography variant="body2" sx={{ fontSize: 11, fontWeight: 600 }}>
+              Image FX Mode
             </Typography>
           </ToggleButton>
         </ToggleButtonGroup>
@@ -165,7 +236,7 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
             <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1, display: 'block', mb: 1 }}>
               Particles
             </Typography>
-            <ParticleSlider
+            <ControlSlider
               label="Count"
               value={particleSettings.countScale}
               valueLabel={formatParticleCount(visibleParticleCount)}
@@ -175,7 +246,7 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
               disabled={isExporting}
               onChange={setParticleCountScale}
             />
-            <ParticleSlider
+            <ControlSlider
               label="Size"
               value={particleSettings.sizeScale}
               valueLabel={`${Math.round(particleSettings.sizeScale * 100)}%`}
@@ -211,7 +282,7 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
             </Box>
           </Paper>
         </>
-      ) : (
+      ) : displayMode === 'wave' ? (
         <Paper elevation={0} sx={{ p: 1.5 }}>
           <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1, display: 'block', mb: 1 }}>
             Wave
@@ -264,6 +335,49 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
               </Typography>
             </ToggleButton>
           </ToggleButtonGroup>
+        </Paper>
+      ) : (
+        <Paper elevation={0} sx={{ p: 1.5 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1, display: 'block', mb: 1 }}>
+            Image FX
+          </Typography>
+          <ToggleButtonGroup
+            value={imageFxSettings.preset}
+            exclusive
+            onChange={(_, value) => {
+              if (value) {
+                const presetValue = value as ImageFxPreset;
+                setImageFxPreset(presetValue, IMAGE_FX_PRESETS[presetValue]);
+              }
+            }}
+            orientation="vertical"
+            fullWidth
+            size="small"
+            disabled={isExporting}
+            sx={{ mb: 1.25 }}
+          >
+            {IMAGE_FX_PRESET_LABELS.map(({ value, label }) => (
+              <ToggleButton key={value} value={value} sx={{ justifyContent: 'flex-start', px: 1.5, py: 0.65 }}>
+                <Typography variant="body2" sx={{ fontSize: 11, fontWeight: 600 }}>
+                  {label}
+                </Typography>
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+
+          {IMAGE_FX_SLIDERS.map(({ key, label }) => (
+            <ControlSlider
+              key={key}
+              label={label}
+              value={imageFxSettings[key]}
+              valueLabel={`${Math.round(imageFxSettings[key] * 100)}%`}
+              min={0}
+              max={1}
+              step={0.01}
+              disabled={isExporting}
+              onChange={(value) => setImageFxEffect(key, value)}
+            />
+          ))}
         </Paper>
       )}
 
@@ -343,7 +457,7 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
   );
 }
 
-function ParticleSlider({
+function ControlSlider({
   label,
   value,
   valueLabel,

@@ -124,7 +124,12 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
     };
 
     return () => {
-      source.stop();
+      source.onended = null;
+      try {
+        source.stop();
+      } catch {
+        // Source may already have ended.
+      }
       source.disconnect();
       ctx.close();
       audioCtxRef.current = null;

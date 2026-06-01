@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import Box from '@mui/material/Box';
-import { type AudioAnalysis, type WaveVisualizerSettings, useStore } from '../store';
+import { type AudioAnalysis, type ImageFxSettings, useStore } from '../store';
 import { type ExportFrameRenderer } from '../export/recorder';
 import { canUseWebCodecsMP4, exportToMP4WithWebCodecs } from '../export/webcodecs';
 import { exportToMP4WithFFmpegFrames } from '../export/ffmpeg';
@@ -9,8 +9,7 @@ interface Props {
   exportRendererRef: MutableRefObject<ExportFrameRenderer | null>;
 }
 
-interface WaveFrame {
-  waveform: Float32Array;
+interface ImageFxFrame {
   spectrum: Float32Array;
   volume: number;
   bass: number;
@@ -19,22 +18,30 @@ interface WaveFrame {
   transient: number;
 }
 
+interface CoverRect {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
 const RENDER_FPS_LIMIT = 30;
 const RENDER_FRAME_INTERVAL_MS = 1000 / RENDER_FPS_LIMIT;
 const EXPORT_WIDTH = 1920;
 const EXPORT_HEIGHT = 1080;
-const WAVEFORM_POINTS = 1024;
 const SPECTRUM_POINTS = 128;
+const NOISE_WIDTH = 180;
+const NOISE_HEIGHT = 102;
 
-export default function WaveVisualizer({ exportRendererRef }: Props) {
+export default function ImageFXVisualizer({ exportRendererRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
   const backgroundImageRef = useRef<HTMLImageElement | null>(null);
+  const noiseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const audioStartedRef = useRef(0);
-  const lastFrameTimeRef = useRef(0);
   const lastRenderTimeRef = useRef(0);
   const lastFpsReportRef = useRef(0);
   const fpsSamplesRef = useRef<number[]>([]);
@@ -90,7 +97,7 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
     const ctx = new AudioContext();
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.78;
+    analyser.smoothingTimeConstant = 0.74;
     analyser.connect(ctx.destination);
 
     const source = ctx.createBufferSource();
@@ -133,7 +140,6 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
     }
 
     const renderTimestamp = timestamp - (elapsedSinceRender % RENDER_FRAME_INTERVAL_MS);
-    lastFrameTimeRef.current = renderTimestamp;
     lastRenderTimeRef.current = renderTimestamp;
 
     const fpsSamples = fpsSamplesRef.current;
@@ -146,7 +152,7 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
       setFps(fpsSamples.length);
     }
 
-    let frame: WaveFrame | null = null;
+    let frame: ImageFxFrame | null = null;
     if (analyserRef.current && state.isPlaying) {
       frame = sampleAnalyserFrame(analyserRef.current, timeDomainRef, frequencyRef);
       if (audioCtxRef.current) {
@@ -156,24 +162,18 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
       frame = sampleAudioBufferFrame(state.audioBuffer, state.analysis, state.currentTime);
     }
 
-    if (frame) {
-      drawWaveFrame(
-        canvas,
-        frame,
-        state.waveSettings,
-        state.waveSettings.backgroundMode === 'image' ? backgroundImageRef.current : null,
-        renderTimestamp / 1000,
-      );
-    } else {
-      drawEmptyWaveCanvas(canvas, state.waveSettings, backgroundImageRef.current);
-    }
+    drawImageFxFrame(
+      canvas,
+      frame ?? createEmptyFrame(),
+      state.imageFxSettings,
+      backgroundImageRef.current,
+      renderTimestamp / 1000,
+      getNoiseCanvas(noiseCanvasRef),
+    );
   }, [setCurrentTime, setFps]);
 
   useEffect(() => {
-    const now = performance.now();
-    lastFrameTimeRef.current = now;
-    lastRenderTimeRef.current = now;
-
+    lastRenderTimeRef.current = performance.now();
     const tick = (timestamp: number) => {
       renderLiveFrame(timestamp);
       rafRef.current = requestAnimationFrame(tick);
@@ -188,11 +188,11 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
       const {
         audioBuffer: exportAudioBuffer,
         analysis: exportAnalysis,
-        waveSettings,
+        imageFxSettings,
         backgroundImageUrl: exportBackgroundImageUrl,
       } = useStore.getState();
       if (!canvas || !exportAudioBuffer || !exportAnalysis) {
-        throw new Error('Wave visualizer is not ready for export');
+        throw new Error('Image FX visualizer is not ready for export');
       }
 
       throwIfAborted(signal);
@@ -202,22 +202,23 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
       canvas.height = EXPORT_HEIGHT;
 
       let exportBackgroundImage: HTMLImageElement | null = null;
-      if (waveSettings.backgroundMode === 'image' && exportBackgroundImageUrl) {
+      if (exportBackgroundImageUrl) {
         exportBackgroundImage = backgroundImageRef.current ?? await loadImage(exportBackgroundImageUrl, signal);
         backgroundImageRef.current = exportBackgroundImage;
       }
 
       const fps = RENDER_FPS_LIMIT;
+      const noiseCanvas = getNoiseCanvas(noiseCanvasRef);
       const drawFrame = (time: number, frame: number) => {
-        const waveFrame = sampleAudioBufferFrame(exportAudioBuffer, exportAnalysis, time);
-        drawWaveFrame(canvas, waveFrame, waveSettings, exportBackgroundImage, time + frame * 0.001);
+        const fxFrame = sampleAudioBufferFrame(exportAudioBuffer, exportAnalysis, time);
+        drawImageFxFrame(canvas, fxFrame, imageFxSettings, exportBackgroundImage, time + frame * 0.017, noiseCanvas);
       };
 
       try {
         let fastExportError: Error | null = null;
         if (canUseWebCodecsMP4()) {
           try {
-            onStatus?.('Rendering wave MP4...');
+            onStatus?.('Rendering Image FX MP4...');
             const blob = await exportToMP4WithWebCodecs({
               canvas,
               audioBuffer: exportAudioBuffer,
@@ -231,7 +232,7 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
           } catch (err) {
             if (signal?.aborted) throw err;
             fastExportError = toError(err);
-            console.warn('Fast WebCodecs wave export failed, falling back to ffmpeg.wasm:', err);
+            console.warn('Fast WebCodecs Image FX export failed, falling back to ffmpeg.wasm:', err);
             onStatus?.('Fast export failed. Retrying fallback...');
             onProgress(0);
           }
@@ -325,7 +326,7 @@ function sampleAnalyserFrame(
   analyser: AnalyserNode,
   timeDomainRef: MutableRefObject<Uint8Array<ArrayBuffer> | null>,
   frequencyRef: MutableRefObject<Uint8Array<ArrayBuffer> | null>,
-): WaveFrame {
+): ImageFxFrame {
   let timeDomain = timeDomainRef.current;
   if (!timeDomain || timeDomain.length !== analyser.fftSize) {
     timeDomain = new Uint8Array(analyser.fftSize);
@@ -340,12 +341,9 @@ function sampleAnalyserFrame(
   analyser.getByteTimeDomainData(timeDomain);
   analyser.getByteFrequencyData(frequency);
 
-  const waveform = new Float32Array(WAVEFORM_POINTS);
   let rms = 0;
-  for (let i = 0; i < WAVEFORM_POINTS; i++) {
-    const sampleIndex = Math.min(timeDomain.length - 1, Math.floor(i / WAVEFORM_POINTS * timeDomain.length));
-    const value = (timeDomain[sampleIndex] - 128) / 128;
-    waveform[i] = value;
+  for (let i = 0; i < timeDomain.length; i++) {
+    const value = (timeDomain[i] - 128) / 128;
     rms += value * value;
   }
 
@@ -357,30 +355,26 @@ function sampleAnalyserFrame(
 
   const bands = computeBands(spectrum);
   return {
-    waveform,
     spectrum,
-    volume: Math.min(1, Math.sqrt(rms / WAVEFORM_POINTS) * 2.8),
+    volume: Math.min(1, Math.sqrt(rms / timeDomain.length) * 3),
     bass: bands.bass,
     mid: bands.mid,
     high: bands.high,
-    transient: Math.max(0, bands.bass - 0.35) * 1.8,
+    transient: Math.max(0, bands.bass - 0.34) * 1.9,
   };
 }
 
-function sampleAudioBufferFrame(audioBuffer: AudioBuffer, analysis: AudioAnalysis, time: number): WaveFrame {
+function sampleAudioBufferFrame(audioBuffer: AudioBuffer, analysis: AudioAnalysis, time: number): ImageFxFrame {
   const channel = audioBuffer.getChannelData(0);
   const sampleRate = audioBuffer.sampleRate;
-  const windowSamples = Math.max(WAVEFORM_POINTS, Math.floor(sampleRate * 0.09));
+  const windowSamples = Math.max(1024, Math.floor(sampleRate * 0.06));
   const centerSample = Math.floor(clamp(time, 0, audioBuffer.duration) * sampleRate);
   const maxStart = Math.max(0, channel.length - windowSamples - 1);
   const start = Math.min(maxStart, Math.max(0, centerSample - Math.floor(windowSamples / 2)));
-  const waveform = new Float32Array(WAVEFORM_POINTS);
 
   let rms = 0;
-  for (let i = 0; i < WAVEFORM_POINTS; i++) {
-    const sampleIndex = start + Math.floor(i / Math.max(1, WAVEFORM_POINTS - 1) * windowSamples);
-    const value = channel[Math.min(channel.length - 1, sampleIndex)] ?? 0;
-    waveform[i] = value;
+  for (let i = 0; i < windowSamples; i++) {
+    const value = channel[start + i] ?? 0;
     rms += value * value;
   }
 
@@ -399,9 +393,8 @@ function sampleAudioBufferFrame(audioBuffer: AudioBuffer, analysis: AudioAnalysi
 
   const bands = computeBands(spectrum);
   return {
-    waveform,
     spectrum,
-    volume: Math.min(1, Math.sqrt(rms / WAVEFORM_POINTS) * 3.2),
+    volume: Math.min(1, Math.sqrt(rms / windowSamples) * 3.2),
     bass: bands.bass,
     mid: bands.mid,
     high: bands.high,
@@ -409,29 +402,13 @@ function sampleAudioBufferFrame(audioBuffer: AudioBuffer, analysis: AudioAnalysi
   };
 }
 
-function drawEmptyWaveCanvas(
+function drawImageFxFrame(
   canvas: HTMLCanvasElement,
-  settings: WaveVisualizerSettings,
-  backgroundImage: HTMLImageElement | null,
-) {
-  const emptyFrame: WaveFrame = {
-    waveform: new Float32Array(WAVEFORM_POINTS),
-    spectrum: new Float32Array(SPECTRUM_POINTS),
-    volume: 0,
-    bass: 0,
-    mid: 0,
-    high: 0,
-    transient: 0,
-  };
-  drawWaveFrame(canvas, emptyFrame, settings, settings.backgroundMode === 'image' ? backgroundImage : null, 0);
-}
-
-function drawWaveFrame(
-  canvas: HTMLCanvasElement,
-  frame: WaveFrame,
-  settings: WaveVisualizerSettings,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
   backgroundImage: HTMLImageElement | null,
   time: number,
+  noiseCanvas: HTMLCanvasElement,
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -439,142 +416,250 @@ function drawWaveFrame(
   const height = canvas.height;
   if (width <= 0 || height <= 0) return;
 
-  drawBackground(ctx, width, height, settings, backgroundImage);
-
-  if (settings.type === 'circular') {
-    drawCircularWave(ctx, width, height, frame, time);
-  } else if (settings.type === 'bars') {
-    drawSpectrumBars(ctx, width, height, frame);
-  } else {
-    drawHorizontalWave(ctx, width, height, frame, time);
-  }
-}
-
-function drawBackground(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  settings: WaveVisualizerSettings,
-  backgroundImage: HTMLImageElement | null,
-) {
   ctx.clearRect(0, 0, width, height);
-  if (settings.backgroundMode === 'image' && backgroundImage?.complete) {
-    drawImageCover(ctx, backgroundImage, width, height);
-    ctx.fillStyle = 'rgba(3, 5, 10, 0.42)';
-    ctx.fillRect(0, 0, width, height);
-    return;
+  if (backgroundImage?.complete && backgroundImage.naturalWidth > 0) {
+    drawReactiveImage(ctx, backgroundImage, width, height, frame, settings, time);
+  } else {
+    drawSolidFallback(ctx, width, height, frame, settings, time);
   }
 
-  ctx.fillStyle = '#050508';
-  ctx.fillRect(0, 0, width, height);
+  drawLightLeak(ctx, width, height, frame, settings, time);
+  drawPulseOverlay(ctx, width, height, frame, settings, time);
+  drawNoise(ctx, width, height, frame, settings, time, noiseCanvas);
+  drawScanlines(ctx, width, height, frame, settings);
+  drawVignette(ctx, width, height, frame, settings);
 }
 
-function drawHorizontalWave(
+function drawReactiveImage(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+  time: number,
+) {
+  const beat = Math.max(frame.volume, frame.transient);
+  const zoom = 1 + settings.pulse * (frame.volume * 0.035 + frame.transient * 0.045);
+  const shake = settings.pulse * frame.transient;
+  const shakeX = (Math.sin(time * 21.7) + Math.sin(time * 7.1) * 0.5) * shake * width * 0.012;
+  const shakeY = (Math.cos(time * 18.4) + Math.sin(time * 5.3) * 0.4) * shake * height * 0.01;
+  const blurPx = settings.blur * (1 + frame.high * 2.4) * 9;
+  const saturation = 1 + frame.mid * 0.55 + settings.glow * 0.42;
+  const contrast = 1 + frame.bass * 0.26 + settings.distortion * 0.16;
+  const brightness = 0.92 + beat * 0.24 + settings.glow * 0.12;
+  const hue = (frame.high - frame.bass) * settings.rgbShift * 18;
+
+  ctx.save();
+  ctx.filter = `blur(${blurPx.toFixed(2)}px) saturate(${saturation.toFixed(3)}) contrast(${contrast.toFixed(3)}) brightness(${brightness.toFixed(3)}) hue-rotate(${hue.toFixed(2)}deg)`;
+  ctx.translate(width / 2 + shakeX, height / 2 + shakeY);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-width / 2, -height / 2);
+  drawImageCover(ctx, image, width, height);
+  ctx.restore();
+
+  drawDistortedStrips(ctx, image, width, height, frame, settings, time);
+  drawRgbShift(ctx, image, width, height, frame, settings, time);
+}
+
+function drawSolidFallback(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  frame: WaveFrame,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
   time: number,
 ) {
-  const centerY = height / 2;
-  const startX = width * 0.14;
-  const endX = width * 0.86;
-  const drawWidth = endX - startX;
-  const amplitude = height * (0.12 + frame.volume * 0.22 + frame.bass * 0.04);
-  const drift = Math.sin(time * 1.6) * height * 0.01;
-
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = 'rgba(0, 229, 238, 0.92)';
-  ctx.lineWidth = Math.max(2, width * 0.002 + frame.volume * 5);
-  ctx.beginPath();
-  for (let i = 0; i < frame.waveform.length; i++) {
-    const x = startX + (i / Math.max(1, frame.waveform.length - 1)) * drawWidth;
-    const y = centerY + frame.waveform[i] * amplitude + drift;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(128, 255, 210, 0.38)';
-  ctx.lineWidth = Math.max(1, width * 0.0012);
-  ctx.beginPath();
-  for (let i = 0; i < frame.waveform.length; i++) {
-    const x = startX + (i / Math.max(1, frame.waveform.length - 1)) * drawWidth;
-    const y = centerY - frame.waveform[i] * amplitude * 0.64 - drift;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawCircularWave(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  frame: WaveFrame,
-  time: number,
-) {
-  const cx = width / 2;
-  const cy = height / 2;
-  const minSide = Math.min(width, height);
-  const baseRadius = minSide * (0.18 + frame.volume * 0.035);
-  const amplitude = minSide * (0.07 + frame.volume * 0.11);
-  const points = 384;
-
-  ctx.save();
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = 'rgba(0, 229, 238, 0.9)';
-  ctx.lineWidth = Math.max(2, minSide * 0.003);
-  ctx.beginPath();
-  for (let i = 0; i <= points; i++) {
-    const p = i / points;
-    const angle = p * Math.PI * 2 - Math.PI / 2;
-    const wave = frame.waveform[Math.floor(p * (frame.waveform.length - 1))] ?? 0;
-    const spec = frame.spectrum[Math.floor(p * (frame.spectrum.length - 1))] ?? 0;
-    const pulse = Math.sin(time * 2.2 + p * Math.PI * 10) * frame.high * minSide * 0.012;
-    const radius = baseRadius + Math.abs(wave) * amplitude + spec * minSide * 0.065 + pulse;
-    const x = cx + Math.cos(angle) * radius;
-    const y = cy + Math.sin(angle) * radius;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(128, 255, 210, 0.34)';
-  ctx.lineWidth = Math.max(1, minSide * 0.0014);
-  ctx.beginPath();
-  ctx.arc(cx, cy, baseRadius * (0.72 + frame.mid * 0.08), 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
-}
-
-function drawSpectrumBars(ctx: CanvasRenderingContext2D, width: number, height: number, frame: WaveFrame) {
-  const barCount = 96;
-  const centerY = height / 2;
-  const totalWidth = width * 0.68;
-  const startX = width / 2 - totalWidth / 2;
-  const spacing = totalWidth / barCount;
-  const barWidth = Math.max(2, spacing * 0.54);
-  const gradient = ctx.createLinearGradient(0, centerY - height * 0.28, 0, centerY + height * 0.28);
-  gradient.addColorStop(0, 'rgba(128, 255, 210, 0.88)');
-  gradient.addColorStop(0.5, 'rgba(0, 229, 238, 0.96)');
-  gradient.addColorStop(1, 'rgba(128, 255, 210, 0.55)');
-
-  ctx.save();
+  const gradient = ctx.createRadialGradient(width / 2, height / 2, 0, width / 2, height / 2, Math.max(width, height) * 0.62);
+  gradient.addColorStop(0, `rgba(${Math.round(8 + frame.high * 42)}, ${Math.round(24 + frame.mid * 40)}, ${Math.round(34 + frame.bass * 50)}, 1)`);
+  gradient.addColorStop(1, '#050508');
   ctx.fillStyle = gradient;
-  for (let i = 0; i < barCount; i++) {
-    const spec = frame.spectrum[Math.floor(i / barCount * frame.spectrum.length)] ?? 0;
-    const wave = Math.abs(frame.waveform[Math.floor(i / barCount * frame.waveform.length)] ?? 0);
-    const energy = Math.min(1, spec * 0.86 + wave * 0.28 + frame.volume * 0.28 + frame.transient * 0.16);
-    const barHeight = Math.max(height * 0.018, energy * height * 0.34);
-    const x = startX + i * spacing + (spacing - barWidth) / 2;
-    ctx.fillRect(x, centerY - barHeight, barWidth, barHeight * 2);
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.save();
+  ctx.globalAlpha = settings.distortion * 0.22 + frame.volume * 0.08;
+  ctx.translate(Math.sin(time) * width * 0.01, Math.cos(time * 1.3) * height * 0.01);
+  ctx.fillStyle = 'rgba(0, 229, 238, 0.18)';
+  ctx.fillRect(width * 0.14, height * 0.34, width * 0.72, height * 0.32);
+  ctx.restore();
+}
+
+function drawDistortedStrips(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+  time: number,
+) {
+  const amount = settings.distortion * (0.22 + frame.mid * 0.55 + frame.transient * 0.35);
+  if (amount <= 0.01) return;
+
+  const cover = getCoverRect(image, width, height);
+  const strips = 34;
+  ctx.save();
+  ctx.globalAlpha = Math.min(0.46, amount * 0.9);
+  ctx.filter = `contrast(${(1.05 + settings.distortion * 0.18).toFixed(3)})`;
+  for (let i = 0; i < strips; i++) {
+    const y = i / strips * height;
+    const stripHeight = Math.ceil(height / strips) + 1;
+    const sourceY = cover.sy + (y / height) * cover.sh;
+    const sourceHeight = (stripHeight / height) * cover.sh;
+    const bandEnergy = frame.spectrum[Math.floor(i / strips * frame.spectrum.length)] ?? 0;
+    const offset = (
+      Math.sin(time * 4.5 + i * 1.73) * 0.5
+      + Math.sin(time * 13.1 + i * 0.37) * frame.transient
+      + (bandEnergy - 0.5) * frame.mid
+    ) * amount * width * 0.07;
+    ctx.drawImage(image, cover.sx, sourceY, cover.sw, sourceHeight, offset, y, width, stripHeight);
   }
   ctx.restore();
+}
+
+function drawRgbShift(
+  ctx: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+  time: number,
+) {
+  const amount = settings.rgbShift * (0.24 + frame.high * 0.5 + frame.transient * 0.26);
+  if (amount <= 0.01) return;
+
+  const offset = amount * width * 0.018;
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = Math.min(0.38, amount * 0.62);
+  ctx.filter = 'saturate(1.45) contrast(1.08)';
+  ctx.translate(Math.sin(time * 8.2) * offset + offset, 0);
+  drawImageCover(ctx, image, width, height);
+  ctx.translate(-offset * 2.1, Math.cos(time * 6.7) * offset * 0.34);
+  drawImageCover(ctx, image, width, height);
+  ctx.globalAlpha = Math.min(0.22, amount * 0.36);
+  ctx.fillStyle = 'rgba(255, 20, 80, 1)';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = 'rgba(0, 220, 255, 1)';
+  ctx.fillRect(-offset * 1.5, 0, width, height);
+  ctx.restore();
+}
+
+function drawLightLeak(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+  time: number,
+) {
+  const strength = settings.glow * (0.18 + frame.volume * 0.38 + frame.bass * 0.2);
+  if (strength <= 0.01) return;
+
+  const x = width * (0.18 + Math.sin(time * 0.41) * 0.08);
+  const y = height * (0.12 + Math.cos(time * 0.31) * 0.05);
+  const radius = Math.max(width, height) * (0.32 + frame.volume * 0.18);
+  const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+  gradient.addColorStop(0, `rgba(0, 229, 238, ${Math.min(0.38, strength)})`);
+  gradient.addColorStop(0.42, `rgba(255, 64, 160, ${Math.min(0.18, strength * 0.45)})`);
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+  ctx.restore();
+}
+
+function drawPulseOverlay(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+  time: number,
+) {
+  const pulse = settings.pulse * (frame.volume * 0.2 + frame.transient * 0.32 + frame.bass * 0.12);
+  if (pulse <= 0.01) return;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.globalAlpha = Math.min(0.28, pulse);
+  const gradient = ctx.createLinearGradient(0, 0, width, height);
+  gradient.addColorStop(0, 'rgba(0, 229, 238, 0.42)');
+  gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.14)');
+  gradient.addColorStop(1, 'rgba(255, 48, 160, 0.34)');
+  ctx.fillStyle = gradient;
+  ctx.translate(Math.sin(time * 2.7) * width * 0.03, 0);
+  ctx.fillRect(0, 0, width, height);
+  ctx.restore();
+}
+
+function drawNoise(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+  time: number,
+  noiseCanvas: HTMLCanvasElement,
+) {
+  const strength = settings.noise * (0.18 + frame.high * 0.4 + frame.transient * 0.22);
+  if (strength <= 0.01) return;
+
+  const noiseCtx = noiseCanvas.getContext('2d');
+  if (!noiseCtx) return;
+  const imageData = noiseCtx.createImageData(NOISE_WIDTH, NOISE_HEIGHT);
+  const seed = Math.floor(time * 60);
+  for (let i = 0; i < imageData.data.length; i += 4) {
+    const value = hashNoise(i + seed) * 255;
+    imageData.data[i] = value;
+    imageData.data[i + 1] = value;
+    imageData.data[i + 2] = value;
+    imageData.data[i + 3] = 255;
+  }
+  noiseCtx.putImageData(imageData, 0, 0);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'overlay';
+  ctx.globalAlpha = Math.min(0.36, strength);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(noiseCanvas, 0, 0, width, height);
+  ctx.restore();
+}
+
+function drawScanlines(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+) {
+  const alpha = Math.min(0.2, settings.noise * 0.12 + settings.rgbShift * 0.07 + frame.high * 0.04);
+  if (alpha <= 0.01) return;
+
+  ctx.save();
+  ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+  const gap = Math.max(3, Math.floor(height / 180));
+  for (let y = 0; y < height; y += gap * 2) {
+    ctx.fillRect(0, y, width, gap);
+  }
+  ctx.restore();
+}
+
+function drawVignette(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+) {
+  const gradient = ctx.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.25, width / 2, height / 2, Math.max(width, height) * 0.68);
+  gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  gradient.addColorStop(1, `rgba(0, 0, 0, ${0.42 + settings.blur * 0.18 + frame.bass * 0.08})`);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
 }
 
 function drawImageCover(
@@ -583,32 +668,37 @@ function drawImageCover(
   width: number,
   height: number,
 ) {
+  const cover = getCoverRect(image, width, height);
+  ctx.drawImage(image, cover.sx, cover.sy, cover.sw, cover.sh, 0, 0, width, height);
+}
+
+function getCoverRect(image: HTMLImageElement, width: number, height: number): CoverRect {
   const imageRatio = image.naturalWidth / image.naturalHeight;
   const canvasRatio = width / height;
-  let sourceWidth = image.naturalWidth;
-  let sourceHeight = image.naturalHeight;
-  let sourceX = 0;
-  let sourceY = 0;
+  let sw = image.naturalWidth;
+  let sh = image.naturalHeight;
+  let sx = 0;
+  let sy = 0;
 
   if (imageRatio > canvasRatio) {
-    sourceWidth = image.naturalHeight * canvasRatio;
-    sourceX = (image.naturalWidth - sourceWidth) / 2;
+    sw = image.naturalHeight * canvasRatio;
+    sx = (image.naturalWidth - sw) / 2;
   } else {
-    sourceHeight = image.naturalWidth / canvasRatio;
-    sourceY = (image.naturalHeight - sourceHeight) / 2;
+    sh = image.naturalWidth / canvasRatio;
+    sy = (image.naturalHeight - sh) / 2;
   }
 
-  ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
+  return { sx, sy, sw, sh };
 }
 
 function frequencyIndexForBar(index: number, total: number, sourceLength: number) {
   const normalized = index / Math.max(1, total - 1);
-  return Math.min(sourceLength - 1, Math.floor(Math.pow(normalized, 1.75) * (sourceLength - 1)));
+  return Math.min(sourceLength - 1, Math.floor(Math.pow(normalized, 1.72) * (sourceLength - 1)));
 }
 
 function computeBands(spectrum: Float32Array) {
   const bassEnd = Math.max(1, Math.floor(spectrum.length * 0.12));
-  const midEnd = Math.max(bassEnd + 1, Math.floor(spectrum.length * 0.46));
+  const midEnd = Math.max(bassEnd + 1, Math.floor(spectrum.length * 0.48));
   return {
     bass: averageRange(spectrum, 0, bassEnd),
     mid: averageRange(spectrum, bassEnd, midEnd),
@@ -623,6 +713,32 @@ function averageRange(data: Float32Array, start: number, end: number) {
     sum += data[i] ?? 0;
   }
   return sum / (safeEnd - start);
+}
+
+function getNoiseCanvas(noiseCanvasRef: MutableRefObject<HTMLCanvasElement | null>) {
+  if (!noiseCanvasRef.current) {
+    const canvas = document.createElement('canvas');
+    canvas.width = NOISE_WIDTH;
+    canvas.height = NOISE_HEIGHT;
+    noiseCanvasRef.current = canvas;
+  }
+  return noiseCanvasRef.current;
+}
+
+function hashNoise(value: number) {
+  const x = Math.sin(value * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function createEmptyFrame(): ImageFxFrame {
+  return {
+    spectrum: new Float32Array(SPECTRUM_POINTS),
+    volume: 0,
+    bass: 0,
+    mid: 0,
+    high: 0,
+    transient: 0,
+  };
 }
 
 function loadImage(src: string, signal?: AbortSignal) {

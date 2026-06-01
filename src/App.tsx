@@ -16,6 +16,7 @@ import Controls from './ui/Controls';
 import React, { Suspense } from 'react';
 const VisualizerCanvas = React.lazy(() => import('./ui/VisualizerCanvas'));
 const WaveVisualizer = React.lazy(() => import('./ui/WaveVisualizer'));
+const ImageFXVisualizer = React.lazy(() => import('./ui/ImageFXVisualizer'));
 import Timeline from './ui/Timeline';
 import type { ExportFrameRenderer, FrameRecorder } from './export/recorder';
 import { DEFAULT_EXPORT_FILE_NAME, triggerBlobDownload } from './export/download';
@@ -218,7 +219,9 @@ export default function App() {
           >
             <Box sx={{ flex: 1, position: 'relative' }}>
               <Suspense fallback={<div style={{width: '100%', height: '100%'}}/>}>
-                {displayMode === 'wave' ? (
+                {displayMode === 'imageFx' ? (
+                  <ImageFXVisualizer exportRendererRef={exportRendererRef} />
+                ) : displayMode === 'wave' ? (
                   <WaveVisualizer exportRendererRef={exportRendererRef} />
                 ) : (
                   <VisualizerCanvas recorderRef={recorderRef} exportRendererRef={exportRendererRef} />

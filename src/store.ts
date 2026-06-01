@@ -3,9 +3,11 @@ import { create } from 'zustand';
 export type PresetId = 'minimal' | 'neon' | 'glitch' | 'organic';
 export type MoodId = 'calm' | 'aggressive' | 'emotional' | 'dark' | 'bright';
 export type EnergyLevel = 'low' | 'medium' | 'high';
-export type DisplayMode = 'visualizer3d' | 'wave';
+export type DisplayMode = 'visualizer3d' | 'wave' | 'imageFx';
 export type WaveVisualizerType = 'horizontal' | 'circular' | 'bars';
 export type WaveBackgroundMode = 'solid' | 'image';
+export type ImageFxPreset = 'clean' | 'glitch' | 'dreamy' | 'dark' | 'vhs';
+export type ImageFxEffectKey = 'glow' | 'blur' | 'rgbShift' | 'noise' | 'distortion' | 'pulse';
 
 export interface AudioAnalysis {
   bpm: number;
@@ -42,6 +44,16 @@ export interface WaveVisualizerSettings {
   backgroundMode: WaveBackgroundMode;
 }
 
+export interface ImageFxSettings {
+  preset: ImageFxPreset;
+  glow: number;
+  blur: number;
+  rgbShift: number;
+  noise: number;
+  distortion: number;
+  pulse: number;
+}
+
 export interface AppState {
   audioFile: File | null;
   audioBuffer: AudioBuffer | null;
@@ -57,6 +69,7 @@ export interface AppState {
   effects: EffectSettings;
   particleSettings: ParticleSettings;
   waveSettings: WaveVisualizerSettings;
+  imageFxSettings: ImageFxSettings;
   isExporting: boolean;
   exportProgress: number;
   exportError: string | null;
@@ -81,6 +94,8 @@ export interface AppState {
   setParticleSizeScale: (value: number) => void;
   setWaveType: (type: WaveVisualizerType) => void;
   setWaveBackgroundMode: (mode: WaveBackgroundMode) => void;
+  setImageFxPreset: (preset: ImageFxPreset, values: Omit<ImageFxSettings, 'preset'>) => void;
+  setImageFxEffect: (key: ImageFxEffectKey, value: number) => void;
   setIsExporting: (v: boolean) => void;
   setExportProgress: (p: number) => void;
   setExportError: (message: string | null) => void;
@@ -122,6 +137,15 @@ export const useStore = create<AppState>((set) => ({
     type: 'horizontal',
     backgroundMode: 'solid',
   },
+  imageFxSettings: {
+    preset: 'clean',
+    glow: 0.28,
+    blur: 0.12,
+    rgbShift: 0.1,
+    noise: 0.08,
+    distortion: 0.08,
+    pulse: 0.2,
+  },
   isExporting: false,
   exportProgress: 0,
   exportError: null,
@@ -151,6 +175,10 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({ waveSettings: { ...s.waveSettings, type } })),
   setWaveBackgroundMode: (backgroundMode) =>
     set((s) => ({ waveSettings: { ...s.waveSettings, backgroundMode } })),
+  setImageFxPreset: (preset, values) =>
+    set({ imageFxSettings: { preset, ...values } }),
+  setImageFxEffect: (key, value) =>
+    set((s) => ({ imageFxSettings: { ...s.imageFxSettings, [key]: value } })),
   setIsExporting: (isExporting) => set({ isExporting }),
   setExportProgress: (exportProgress) => set({ exportProgress }),
   setExportError: (exportError) => set({ exportError }),
