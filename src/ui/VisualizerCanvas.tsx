@@ -229,6 +229,14 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
         transient = liveFrame.transient;
       }
 
+      const liveMultiplier = getLiveVisualMultiplier();
+      if (liveMultiplier !== 1) {
+        bass = clamp01(bass * liveMultiplier);
+        mid = clamp01(mid * liveMultiplier);
+        high = clamp01(high * liveMultiplier);
+        transient = clamp01(transient * liveMultiplier);
+      }
+
       const presetConfig = PRESETS[preset];
       scene.update(
         dt,
@@ -416,6 +424,15 @@ function getEffectiveParticleSize(preset: PresetConfig, sizeScale: number) {
 
 function clampInteger(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function getLiveVisualMultiplier() {
+  const { isLiveMode, liveIntensity, liveBoost } = useStore.getState();
+  return isLiveMode ? liveIntensity * (liveBoost ? 1.45 : 1) : 1;
+}
+
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value));
 }
 
 interface AnalysisFrame {

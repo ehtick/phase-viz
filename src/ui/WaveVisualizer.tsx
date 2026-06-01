@@ -157,9 +157,10 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
     }
 
     if (frame) {
+      const liveFrame = applyLiveWaveBoost(frame);
       drawWaveFrame(
         canvas,
-        frame,
+        liveFrame,
         state.waveSettings,
         state.waveSettings.backgroundMode === 'image' ? backgroundImageRef.current : null,
         renderTimestamp / 1000,
@@ -625,6 +626,38 @@ function averageRange(data: Float32Array, start: number, end: number) {
   return sum / (safeEnd - start);
 }
 
+function applyLiveWaveBoost(frame: WaveFrame): WaveFrame {
+  const { isLiveMode, liveIntensity, liveBoost } = useStore.getState();
+  if (!isLiveMode) return frame;
+  const multiplier = liveIntensity * (liveBoost ? 1.45 : 1);
+  return {
+    ...frame,
+    waveform: scaleSignedFloatArray(frame.waveform, multiplier),
+    spectrum: scaleFloatArray(frame.spectrum, multiplier),
+    volume: clamp01(frame.volume * multiplier),
+    bass: clamp01(frame.bass * multiplier),
+    mid: clamp01(frame.mid * multiplier),
+    high: clamp01(frame.high * multiplier),
+    transient: clamp01(frame.transient * multiplier),
+  };
+}
+
+function scaleFloatArray(values: Float32Array, multiplier: number) {
+  const next = new Float32Array(values.length);
+  for (let i = 0; i < values.length; i++) {
+    next[i] = clamp01(values[i] * multiplier);
+  }
+  return next;
+}
+
+function scaleSignedFloatArray(values: Float32Array, multiplier: number) {
+  const next = new Float32Array(values.length);
+  for (let i = 0; i < values.length; i++) {
+    next[i] = clamp(values[i] * multiplier, -1, 1);
+  }
+  return next;
+}
+
 function loadImage(src: string, signal?: AbortSignal) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     throwIfAborted(signal);
@@ -645,6 +678,10 @@ function loadImage(src: string, signal?: AbortSignal) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value));
 }
 
 function throwIfAborted(signal?: AbortSignal) {

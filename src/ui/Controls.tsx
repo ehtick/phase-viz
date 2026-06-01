@@ -18,12 +18,12 @@ import type {
   EffectSettings,
   ImageFxEffectKey,
   ImageFxPreset,
-  ImageFxSettings,
   PresetId,
   WaveBackgroundMode,
   WaveVisualizerType,
 } from '../store';
 import { PRESETS } from '../visual/presets';
+import { IMAGE_FX_PRESET_LABELS, IMAGE_FX_PRESETS } from '../visual/imageFxPresets';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import CancelIcon from '@mui/icons-material/Cancel';
@@ -38,57 +38,6 @@ const EFFECT_LABELS: { key: keyof EffectSettings; label: string }[] = [
   { key: 'meltingDatamosh', label: 'Melt Datamosh' },
   { key: 'glitchNoise', label: 'Glitch' },
   { key: 'cameraShake', label: 'Cam Shake' },
-];
-
-const IMAGE_FX_PRESETS: Record<ImageFxPreset, Omit<ImageFxSettings, 'preset'>> = {
-  clean: {
-    glow: 0.22,
-    blur: 0.06,
-    rgbShift: 0.06,
-    noise: 0.03,
-    distortion: 0.04,
-    pulse: 0.16,
-  },
-  glitch: {
-    glow: 0.34,
-    blur: 0.18,
-    rgbShift: 0.62,
-    noise: 0.54,
-    distortion: 0.5,
-    pulse: 0.42,
-  },
-  dreamy: {
-    glow: 0.72,
-    blur: 0.34,
-    rgbShift: 0.16,
-    noise: 0.12,
-    distortion: 0.2,
-    pulse: 0.48,
-  },
-  dark: {
-    glow: 0.18,
-    blur: 0.1,
-    rgbShift: 0.12,
-    noise: 0.28,
-    distortion: 0.18,
-    pulse: 0.26,
-  },
-  vhs: {
-    glow: 0.3,
-    blur: 0.24,
-    rgbShift: 0.46,
-    noise: 0.42,
-    distortion: 0.36,
-    pulse: 0.3,
-  },
-};
-
-const IMAGE_FX_PRESET_LABELS: { value: ImageFxPreset; label: string }[] = [
-  { value: 'clean', label: 'Clean' },
-  { value: 'glitch', label: 'Glitch' },
-  { value: 'dreamy', label: 'Dreamy' },
-  { value: 'dark', label: 'Dark' },
-  { value: 'vhs', label: 'VHS' },
 ];
 
 const IMAGE_FX_SLIDERS: { key: ImageFxEffectKey; label: string }[] = [
@@ -122,6 +71,9 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     waveSettings,
     imageFxSettings,
     backgroundImageUrl,
+    isLiveMode,
+    liveUiVisible,
+    liveIntensity,
     setDisplayMode,
     setPreset,
     toggleEffect,
@@ -131,6 +83,9 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     setWaveBackgroundMode,
     setImageFxPreset,
     setImageFxEffect,
+    setIsLiveMode,
+    setLiveUiVisible,
+    setLiveHelpOpen,
   } = useStore();
   const activePreset = PRESETS[preset];
   const visibleParticleCount = Math.round(
@@ -171,6 +126,56 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
             </Typography>
           </ToggleButton>
         </ToggleButtonGroup>
+      </Paper>
+
+      {/* Live / VJ */}
+      <Paper elevation={0} sx={{ p: 1.5 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1 }}>
+            Live / VJ
+          </Typography>
+          <Chip
+            label={isLiveMode ? 'ON' : 'OFF'}
+            size="small"
+            color={isLiveMode ? 'primary' : 'default'}
+            variant="outlined"
+            sx={{ fontSize: 10, height: 18 }}
+          />
+        </Box>
+        <Button
+          variant={isLiveMode ? 'outlined' : 'contained'}
+          color={isLiveMode ? 'inherit' : 'primary'}
+          fullWidth
+          size="small"
+          disabled={isExporting}
+          onClick={() => setIsLiveMode(!isLiveMode)}
+          sx={{ fontWeight: 600, mb: isLiveMode ? 1 : 0 }}
+        >
+          {isLiveMode ? 'Exit Live / VJ' : 'Enter Live / VJ'}
+        </Button>
+        {isLiveMode && (
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setLiveUiVisible(!liveUiVisible)}
+              sx={{ fontSize: 10, minWidth: 0 }}
+            >
+              {liveUiVisible ? 'Hide UI' : 'Show UI'}
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setLiveHelpOpen(true)}
+              sx={{ fontSize: 10, minWidth: 0 }}
+            >
+              Help
+            </Button>
+            <Typography variant="caption" color="text.secondary" sx={{ gridColumn: '1 / -1', fontSize: 10 }}>
+              Intensity {Math.round(liveIntensity * 100)}%
+            </Typography>
+          </Box>
+        )}
       </Paper>
 
       {/* Analysis Stats */}

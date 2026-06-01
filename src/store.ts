@@ -8,6 +8,7 @@ export type WaveVisualizerType = 'horizontal' | 'circular' | 'bars';
 export type WaveBackgroundMode = 'solid' | 'image';
 export type ImageFxPreset = 'clean' | 'glitch' | 'dreamy' | 'dark' | 'vhs';
 export type ImageFxEffectKey = 'glow' | 'blur' | 'rgbShift' | 'noise' | 'distortion' | 'pulse';
+export type LiveHelpLanguage = 'en' | 'ja';
 
 export interface AudioAnalysis {
   bpm: number;
@@ -70,6 +71,12 @@ export interface AppState {
   particleSettings: ParticleSettings;
   waveSettings: WaveVisualizerSettings;
   imageFxSettings: ImageFxSettings;
+  isLiveMode: boolean;
+  liveUiVisible: boolean;
+  liveHelpOpen: boolean;
+  liveHelpLanguage: LiveHelpLanguage;
+  liveIntensity: number;
+  liveBoost: boolean;
   isExporting: boolean;
   exportProgress: number;
   exportError: string | null;
@@ -96,6 +103,12 @@ export interface AppState {
   setWaveBackgroundMode: (mode: WaveBackgroundMode) => void;
   setImageFxPreset: (preset: ImageFxPreset, values: Omit<ImageFxSettings, 'preset'>) => void;
   setImageFxEffect: (key: ImageFxEffectKey, value: number) => void;
+  setIsLiveMode: (value: boolean) => void;
+  setLiveUiVisible: (value: boolean) => void;
+  setLiveHelpOpen: (value: boolean) => void;
+  setLiveHelpLanguage: (language: LiveHelpLanguage) => void;
+  setLiveIntensity: (value: number) => void;
+  setLiveBoost: (value: boolean) => void;
   setIsExporting: (v: boolean) => void;
   setExportProgress: (p: number) => void;
   setExportError: (message: string | null) => void;
@@ -146,6 +159,12 @@ export const useStore = create<AppState>((set) => ({
     distortion: 0.08,
     pulse: 0.2,
   },
+  isLiveMode: false,
+  liveUiVisible: true,
+  liveHelpOpen: false,
+  liveHelpLanguage: 'en',
+  liveIntensity: 1,
+  liveBoost: false,
   isExporting: false,
   exportProgress: 0,
   exportError: null,
@@ -179,6 +198,18 @@ export const useStore = create<AppState>((set) => ({
     set({ imageFxSettings: { preset, ...values } }),
   setImageFxEffect: (key, value) =>
     set((s) => ({ imageFxSettings: { ...s.imageFxSettings, [key]: value } })),
+  setIsLiveMode: (isLiveMode) =>
+    set({
+      isLiveMode,
+      liveUiVisible: true,
+      liveHelpOpen: isLiveMode,
+      liveBoost: false,
+    }),
+  setLiveUiVisible: (liveUiVisible) => set({ liveUiVisible }),
+  setLiveHelpOpen: (liveHelpOpen) => set({ liveHelpOpen }),
+  setLiveHelpLanguage: (liveHelpLanguage) => set({ liveHelpLanguage }),
+  setLiveIntensity: (liveIntensity) => set({ liveIntensity }),
+  setLiveBoost: (liveBoost) => set({ liveBoost }),
   setIsExporting: (isExporting) => set({ isExporting }),
   setExportProgress: (exportProgress) => set({ exportProgress }),
   setExportError: (exportError) => set({ exportError }),

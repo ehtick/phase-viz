@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import Typography from '@mui/material/Typography';
 import Paper from '@mui/material/Paper';
 import IconButton from '@mui/material/IconButton';
@@ -9,17 +11,32 @@ import Tooltip from '@mui/material/Tooltip';
 import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import VideocamIcon from '@mui/icons-material/Videocam';
 import theme from './theme';
 import { useStore } from './store';
+import type { ImageFxPreset, PresetId, WaveVisualizerType } from './store';
 import Uploader from './ui/Uploader';
 import Controls from './ui/Controls';
 import React, { Suspense } from 'react';
 const VisualizerCanvas = React.lazy(() => import('./ui/VisualizerCanvas'));
 const WaveVisualizer = React.lazy(() => import('./ui/WaveVisualizer'));
 const ImageFXVisualizer = React.lazy(() => import('./ui/ImageFXVisualizer'));
+import LiveVJHelp from './ui/LiveVJHelp';
 import Timeline from './ui/Timeline';
 import type { ExportFrameRenderer, FrameRecorder } from './export/recorder';
 import { DEFAULT_EXPORT_FILE_NAME, triggerBlobDownload } from './export/download';
+import { PRESETS } from './visual/presets';
+import { IMAGE_FX_PRESETS } from './visual/imageFxPresets';
+
+const PRESET_IDS = Object.keys(PRESETS) as PresetId[];
+const WAVE_TYPES: WaveVisualizerType[] = ['horizontal', 'circular', 'bars'];
+const IMAGE_FX_PRESET_IDS: ImageFxPreset[] = ['clean', 'glitch', 'dreamy', 'dark', 'vhs'];
+const LIVE_INTENSITY_STEP = 0.1;
+const LIVE_INTENSITY_MIN = 0.5;
+const LIVE_INTENSITY_MAX = 1.8;
 
 export default function App() {
   const recorderRef = useRef<FrameRecorder | null>(null);
@@ -34,13 +51,24 @@ export default function App() {
     displayMode,
     isExporting,
     isFullscreen,
+    isLiveMode,
+    liveUiVisible,
+    liveHelpOpen,
+    liveHelpLanguage,
+    liveIntensity,
+    liveBoost,
     setIsFullscreen,
     setIsExporting,
     setExportProgress,
     setExportError,
     setExportStatus,
     setExportDownload,
+    setIsLiveMode,
+    setLiveUiVisible,
+    setLiveHelpOpen,
+    setLiveHelpLanguage,
   } = useStore();
+  const showChrome = !isLiveMode || liveUiVisible;
 
   useEffect(() => () => {
     if (lastExportUrlRef.current) {
@@ -113,7 +141,7 @@ export default function App() {
     exportAbortRef.current?.abort();
   };
 
-  const toggleFullscreen = () => {
+  const toggleFullscreen = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
     if (!document.fullscreenElement) {
@@ -121,7 +149,90 @@ export default function App() {
     } else {
       document.exitFullscreen().then(() => setIsFullscreen(false));
     }
-  };
+  }, [setIsFullscreen]);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, [setIsFullscreen]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const state = useStore.getState();
+      if (!state.isLiveMode || state.isExporting || isEditableTarget(event.target)) return;
+
+      const key = event.key;
+      if (key === '?' || (key === '/' && event.shiftKey)) {
+        event.preventDefault();
+        state.setLiveHelpOpen(true);
+        return;
+      }
+      if (key === 'Escape') {
+        if (state.liveHelpOpen) {
+          event.preventDefault();
+          state.setLiveHelpOpen(false);
+        } else if (document.fullscreenElement) {
+          event.preventDefault();
+          document.exitFullscreen();
+        }
+        return;
+      }
+      if (key.toLowerCase() === 'h') {
+        event.preventDefault();
+        if (state.liveHelpOpen) {
+          state.setLiveHelpOpen(false);
+        } else {
+          state.setLiveUiVisible(!state.liveUiVisible);
+        }
+        return;
+      }
+      if (key.toLowerCase() === 'f') {
+        event.preventDefault();
+        toggleFullscreen();
+        return;
+      }
+      if (key === ' ') {
+        event.preventDefault();
+        state.setLiveBoost(true);
+        return;
+      }
+      if (key === 'ArrowUp') {
+        event.preventDefault();
+        state.setLiveIntensity(clamp(state.liveIntensity + LIVE_INTENSITY_STEP, LIVE_INTENSITY_MIN, LIVE_INTENSITY_MAX));
+        return;
+      }
+      if (key === 'ArrowDown') {
+        event.preventDefault();
+        state.setLiveIntensity(clamp(state.liveIntensity - LIVE_INTENSITY_STEP, LIVE_INTENSITY_MIN, LIVE_INTENSITY_MAX));
+        return;
+      }
+      if (key === 'ArrowLeft' || key === 'ArrowRight') {
+        event.preventDefault();
+        moveLiveSelection(key === 'ArrowRight' ? 1 : -1);
+        return;
+      }
+      if (/^[1-5]$/.test(key)) {
+        event.preventDefault();
+        applyLivePresetNumber(Number(key) - 1);
+      }
+    };
+
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === ' ') {
+        useStore.getState().setLiveBoost(false);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [toggleFullscreen]);
 
   return (
     <ThemeProvider theme={theme}>
@@ -137,6 +248,7 @@ export default function App() {
         }}
       >
         {/* Header */}
+        {showChrome && (
         <Box
           component="header"
           sx={{
@@ -170,11 +282,12 @@ export default function App() {
             Three.js · Web Audio API · WebGL
           </Typography>
         </Box>
+        )}
 
         {/* Main layout */}
         <Box sx={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           {/* Left panel */}
-          {!isFullscreen && (
+          {showChrome && !isFullscreen && (
             <Paper
               elevation={0}
               sx={{
@@ -229,6 +342,7 @@ export default function App() {
               </Suspense>
 
               {/* Fullscreen toggle */}
+              {showChrome && (
               <Tooltip title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
                 <IconButton
                   size="small"
@@ -249,9 +363,10 @@ export default function App() {
                   )}
                 </IconButton>
               </Tooltip>
+              )}
 
               {/* Empty state */}
-              {!analysis && (
+              {!analysis && showChrome && (
                 <Box
                   sx={{
                     position: 'absolute',
@@ -269,13 +384,92 @@ export default function App() {
                   </Typography>
                 </Box>
               )}
+
+              {isLiveMode && liveUiVisible && (
+                <Paper
+                  elevation={4}
+                  sx={{
+                    position: 'absolute',
+                    left: 8,
+                    top: 8,
+                    zIndex: 20,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.75,
+                    px: 1,
+                    py: 0.5,
+                    bgcolor: 'rgba(5,5,8,0.72)',
+                    borderColor: 'rgba(0, 229, 238, 0.18)',
+                    backdropFilter: 'blur(10px)',
+                  }}
+                >
+                  <Chip
+                    icon={<VideocamIcon sx={{ fontSize: 14 }} />}
+                    label={liveBoost ? 'BOOST' : `LIVE ${Math.round(liveIntensity * 100)}%`}
+                    size="small"
+                    color={liveBoost ? 'secondary' : 'primary'}
+                    sx={{ height: 22, fontSize: 10, borderRadius: 1 }}
+                  />
+                  <Tooltip title="Hide UI (H)">
+                    <IconButton size="small" onClick={() => setLiveUiVisible(false)} sx={{ color: 'text.primary', p: 0.5 }}>
+                      <VisibilityOffIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Shortcuts (?)">
+                    <IconButton size="small" onClick={() => setLiveHelpOpen(true)} sx={{ color: 'text.primary', p: 0.5 }}>
+                      <HelpOutlineIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setIsLiveMode(false)}
+                    sx={{ fontSize: 10, minWidth: 0, px: 0.75, py: 0.25 }}
+                  >
+                    Exit
+                  </Button>
+                </Paper>
+              )}
+
+              {isLiveMode && !liveUiVisible && liveHelpOpen && (
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    left: 8,
+                    top: 8,
+                    zIndex: 20,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 0.5,
+                    px: 0.75,
+                    py: 0.35,
+                    borderRadius: 1,
+                    bgcolor: 'rgba(5,5,8,0.72)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    backdropFilter: 'blur(10px)',
+                  }}
+                >
+                  <VisibilityIcon sx={{ fontSize: 14, color: 'primary.light' }} />
+                  <Typography variant="caption" sx={{ fontSize: 10, color: 'text.secondary' }}>
+                    UI hidden
+                  </Typography>
+                </Box>
+              )}
+
+              {isLiveMode && liveHelpOpen && (
+                <LiveVJHelp
+                  language={liveHelpLanguage}
+                  onLanguageChange={setLiveHelpLanguage}
+                  onClose={() => setLiveHelpOpen(false)}
+                />
+              )}
             </Box>
 
-            <Timeline />
+            {showChrome && <Timeline />}
           </Box>
 
           {/* Right panel */}
-          {!isFullscreen && (
+          {showChrome && !isFullscreen && (
             <Paper
               elevation={0}
               sx={{
@@ -303,6 +497,59 @@ function isAbortError(err: unknown) {
 
 function getErrorMessage(err: unknown) {
   return err instanceof Error ? err.message : 'Export failed unexpectedly';
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  return tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable;
+}
+
+function applyLivePresetNumber(index: number) {
+  const state = useStore.getState();
+  if (state.displayMode === 'visualizer3d') {
+    const preset = PRESET_IDS[index];
+    if (preset) state.setPreset(preset);
+    return;
+  }
+  if (state.displayMode === 'wave') {
+    const waveType = WAVE_TYPES[index];
+    if (waveType) state.setWaveType(waveType);
+    return;
+  }
+
+  const imageFxPreset = IMAGE_FX_PRESET_IDS[index];
+  if (imageFxPreset) {
+    state.setImageFxPreset(imageFxPreset, IMAGE_FX_PRESETS[imageFxPreset]);
+  }
+}
+
+function moveLiveSelection(direction: 1 | -1) {
+  const state = useStore.getState();
+  if (state.displayMode === 'visualizer3d') {
+    const index = PRESET_IDS.indexOf(state.preset);
+    state.setPreset(cycleValue(PRESET_IDS, index, direction));
+    return;
+  }
+  if (state.displayMode === 'wave') {
+    const index = WAVE_TYPES.indexOf(state.waveSettings.type);
+    state.setWaveType(cycleValue(WAVE_TYPES, index, direction));
+    return;
+  }
+
+  const index = IMAGE_FX_PRESET_IDS.indexOf(state.imageFxSettings.preset);
+  const preset = cycleValue(IMAGE_FX_PRESET_IDS, index, direction);
+  state.setImageFxPreset(preset, IMAGE_FX_PRESETS[preset]);
+}
+
+function cycleValue<T>(values: T[], currentIndex: number, direction: 1 | -1): T {
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = (safeIndex + direction + values.length) % values.length;
+  return values[nextIndex];
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function WaveformMini({ waveform }: { waveform: Float32Array }) {
