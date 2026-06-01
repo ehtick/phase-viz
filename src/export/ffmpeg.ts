@@ -6,7 +6,6 @@ const LOCAL_CORE = '/vendor/ffmpeg-core.js';
 const LOCAL_WASM = '/vendor/ffmpeg-core.wasm';
 // ESM build is more compatible with Worker contexts than UMD
 const CDN_BASE = `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`;
-const R2_ASSET_BASE_URL = import.meta.env.VITE_FFMPEG_ASSET_BASE_URL?.replace(/\/+$/, '');
 
 interface CoreURLs {
   coreURL: string;
@@ -32,18 +31,18 @@ function createLocalCoreURLs(): CoreURLs {
 
 async function resolveCoreURLs(signal?: AbortSignal): Promise<CoreURLs> {
   try {
-    // Prefer same-origin bundled assets. Remote R2/CDN assets can hit
-    // Cloudflare 522 timeouts, while public/vendor is shipped with the app.
-    const res = await fetch(LOCAL_CORE, { method: 'GET', signal });
-    if (res.ok) {
+    // Prefer same-origin bundled assets when both files are deployable. The wasm
+    // file exceeds Cloudflare Workers Static Assets' 25 MiB per-file limit, so
+    // production builds may exclude it and fall back to the CDN pair below.
+    const [coreRes, wasmRes] = await Promise.all([
+      fetch(LOCAL_CORE, { method: 'GET', signal }),
+      fetch(LOCAL_WASM, { method: 'HEAD', signal }),
+    ]);
+    if (coreRes.ok && wasmRes.ok) {
       return createLocalCoreURLs();
     }
   } catch {
     // ignore and fallback to remote sources
-  }
-
-  if (R2_ASSET_BASE_URL) {
-    return createCoreURLs(R2_ASSET_BASE_URL);
   }
 
   return createCoreURLs(CDN_BASE);

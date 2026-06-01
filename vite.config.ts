@@ -1,13 +1,25 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+
+function cloudflareAssetsIgnorePlugin(): Plugin {
+  return {
+    name: 'cloudflare-assetsignore',
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: '.assetsignore',
+        source: 'vendor/ffmpeg-core.wasm\n',
+      });
+    },
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
-  // NOTE: Removed Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy
-  // headers in dev to allow loading `ffmpeg-core.js` from CDN. If you need
-  // COOP/COEP for SharedArrayBuffer/WebCodecs, host ffmpeg assets on the same
-  // origin or configure a proxy that sets the required CORP headers.
+  plugins: [react(), cloudflareAssetsIgnorePlugin()],
+  // NOTE: The MP4 fallback loads vendored ffmpeg assets from public/vendor.
+  // Keep dev headers simple so same-origin module worker imports behave like
+  // production Workers Static Assets.
   optimizeDeps: {
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
