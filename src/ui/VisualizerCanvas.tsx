@@ -44,6 +44,8 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
     presetRevision,
     effects,
     particleSettings,
+    visualizerSettings,
+    visualizerLayerOrder,
     backgroundImageUrl,
     setFps,
     setCurrentTime,
@@ -91,6 +93,22 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
     particleSizeScaleRef.current = particleSettings.sizeScale;
     sceneRef.current?.setParticleSize(getEffectiveParticleSize(PRESETS[preset], particleSettings.sizeScale));
   }, [preset, particleSettings.sizeScale]);
+
+  useEffect(() => {
+    sceneRef.current?.setParticleShape(particleSettings.shape);
+  }, [particleSettings.shape, preset, presetRevision]);
+
+  useEffect(() => {
+    sceneRef.current?.setCameraDistance(visualizerSettings.cameraDistance);
+  }, [visualizerSettings.cameraDistance]);
+
+  useEffect(() => {
+    sceneRef.current?.setMorphIntensity(visualizerSettings.morphIntensity);
+  }, [visualizerSettings.morphIntensity]);
+
+  useEffect(() => {
+    sceneRef.current?.setLayerOrder(visualizerLayerOrder);
+  }, [visualizerLayerOrder]);
 
   // Apply background image when it changes
   useEffect(() => {

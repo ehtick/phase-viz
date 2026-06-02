@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import Box from '@mui/material/Box';
-import { type AudioAnalysis, type EffectSettings, type ImageFxSettings, useStore } from '../store';
+import { type AudioAnalysis, type EffectSettings, type ImageFxLayerId, type ImageFxSettings, useStore } from '../store';
 import { type ExportFrameRenderer } from '../export/recorder';
 import { canUseWebCodecsMP4, exportToMP4WithWebCodecs } from '../export/webcodecs';
 import { exportToMP4WithFFmpegFrames } from '../export/ffmpeg';
@@ -169,6 +169,7 @@ export default function ImageFXVisualizer({ exportRendererRef }: Props) {
       applyLiveImageFxBoost(frame ?? createEmptyFrame()),
       state.imageFxSettings,
       state.effects,
+      state.imageFxLayerOrder,
       backgroundImageRef.current,
       renderTimestamp / 1000,
       getNoiseCanvas(noiseCanvasRef),
@@ -195,6 +196,7 @@ export default function ImageFXVisualizer({ exportRendererRef }: Props) {
         analysis: exportAnalysis,
         imageFxSettings,
         effects,
+        imageFxLayerOrder,
         backgroundImageUrl: exportBackgroundImageUrl,
       } = useStore.getState();
       if (!canvas || !exportAudioBuffer || !exportAnalysis) {
@@ -225,6 +227,7 @@ export default function ImageFXVisualizer({ exportRendererRef }: Props) {
           fxFrame,
           imageFxSettings,
           effects,
+          imageFxLayerOrder,
           exportBackgroundImage,
           time + frame * 0.017,
           noiseCanvas,
@@ -426,6 +429,7 @@ function drawImageFxFrame(
   frame: ImageFxFrame,
   settings: ImageFxSettings,
   effects: EffectSettings,
+  layerOrder: ImageFxLayerId[],
   backgroundImage: HTMLImageElement | null,
   time: number,
   noiseCanvas: HTMLCanvasElement,
@@ -439,18 +443,121 @@ function drawImageFxFrame(
   if (width <= 0 || height <= 0) return;
 
   ctx.clearRect(0, 0, width, height);
+  let drewBackground = false;
+  for (const layer of layerOrder) {
+    if (layer === 'background') drewBackground = true;
+    drawImageFxLayer(canvas, ctx, layer, width, height, frame, settings, effects, backgroundImage, time, noiseCanvas, postCanvas, feedbackCanvas);
+  }
+
+  if (!drewBackground) {
+    drawBackgroundLayer(ctx, width, height, frame, settings, backgroundImage, time);
+  }
+
+  copyCanvas(feedbackCanvas, canvas, width, height);
+}
+
+function drawImageFxLayer(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  layer: ImageFxLayerId,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+  effects: EffectSettings,
+  backgroundImage: HTMLImageElement | null,
+  time: number,
+  noiseCanvas: HTMLCanvasElement,
+  postCanvas: HTMLCanvasElement,
+  feedbackCanvas: HTMLCanvasElement,
+) {
+  switch (layer) {
+    case 'background':
+      drawBackgroundLayer(ctx, width, height, frame, settings, backgroundImage, time);
+      break;
+    case 'distortion':
+      if (backgroundImage?.complete && backgroundImage.naturalWidth > 0) {
+        drawDistortedStrips(ctx, backgroundImage, width, height, frame, settings, time);
+      }
+      break;
+    case 'rgbShift':
+      if (backgroundImage?.complete && backgroundImage.naturalWidth > 0) {
+        drawRgbShift(ctx, backgroundImage, width, height, frame, settings, time);
+      }
+      break;
+    case 'glow':
+      drawLightLeak(ctx, width, height, frame, settings, time);
+      break;
+    case 'pulse':
+      drawPulseOverlay(ctx, width, height, frame, settings, time);
+      break;
+    case 'noise':
+      drawNoise(ctx, width, height, frame, settings, time, noiseCanvas);
+      break;
+    case 'scanlines':
+      drawScanlines(ctx, width, height, frame, settings);
+      break;
+    case 'vignette':
+      drawVignette(ctx, width, height, frame, settings);
+      break;
+    case 'datamosh':
+      if (hasDatamoshEffect(effects)) {
+        copyCanvas(postCanvas, canvas, width, height);
+        drawDatamoshFeedback(ctx, postCanvas, feedbackCanvas, width, height, frame, effects, time);
+      }
+      break;
+    case 'blockDatamosh':
+      if (effects.blockDatamosh) {
+        copyCanvas(postCanvas, canvas, width, height);
+        drawBlockDatamosh(ctx, postCanvas, width, height, frame, time);
+      }
+      break;
+    case 'glitchDatamosh':
+      if (effects.glitchDatamosh) {
+        copyCanvas(postCanvas, canvas, width, height);
+        drawGlitchDatamosh(ctx, postCanvas, width, height, frame, time);
+      }
+      break;
+    case 'meltDatamosh':
+      if (effects.meltingDatamosh) {
+        copyCanvas(postCanvas, canvas, width, height);
+        drawMeltDatamosh(ctx, postCanvas, width, height, frame, time);
+      }
+      break;
+    case 'toggleRgb':
+      if (effects.rgbSplit || effects.chromaticAberration) {
+        copyCanvas(postCanvas, canvas, width, height);
+        drawToggleRgbSplit(ctx, postCanvas, width, height, frame, effects, time);
+      }
+      break;
+    case 'glitch':
+      if (effects.glitchNoise) {
+        drawToggleGlitchNoise(ctx, width, height, frame, time);
+      }
+      break;
+    case 'cameraShake':
+      if (effects.cameraShake) {
+        copyCanvas(postCanvas, canvas, width, height);
+        drawCameraShake(ctx, postCanvas, width, height, frame, time);
+      }
+      break;
+  }
+}
+
+function drawBackgroundLayer(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  frame: ImageFxFrame,
+  settings: ImageFxSettings,
+  backgroundImage: HTMLImageElement | null,
+  time: number,
+) {
   if (backgroundImage?.complete && backgroundImage.naturalWidth > 0) {
     drawReactiveImage(ctx, backgroundImage, width, height, frame, settings, time);
   } else {
     drawSolidFallback(ctx, width, height, frame, settings, time);
   }
-
-  drawLightLeak(ctx, width, height, frame, settings, time);
-  drawPulseOverlay(ctx, width, height, frame, settings, time);
-  drawNoise(ctx, width, height, frame, settings, time, noiseCanvas);
-  drawScanlines(ctx, width, height, frame, settings);
-  drawVignette(ctx, width, height, frame, settings);
-  drawToggleEffects(canvas, ctx, width, height, frame, effects, time, postCanvas, feedbackCanvas);
 }
 
 function drawReactiveImage(
@@ -480,9 +587,6 @@ function drawReactiveImage(
   ctx.translate(-width / 2, -height / 2);
   drawImageCover(ctx, image, width, height);
   ctx.restore();
-
-  drawDistortedStrips(ctx, image, width, height, frame, settings, time);
-  drawRgbShift(ctx, image, width, height, frame, settings, time);
 }
 
 function drawSolidFallback(
@@ -685,58 +789,12 @@ function drawVignette(
   ctx.fillRect(0, 0, width, height);
 }
 
-function drawToggleEffects(
-  canvas: HTMLCanvasElement,
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  frame: ImageFxFrame,
-  effects: EffectSettings,
-  time: number,
-  postCanvas: HTMLCanvasElement,
-  feedbackCanvas: HTMLCanvasElement,
-) {
-  const hasDatamosh = effects.datamosh
+function hasDatamoshEffect(effects: EffectSettings) {
+  return effects.datamosh
     || effects.strongDatamosh
     || effects.blockDatamosh
     || effects.glitchDatamosh
     || effects.meltingDatamosh;
-
-  if (hasDatamosh) {
-    copyCanvas(postCanvas, canvas, width, height);
-    drawDatamoshFeedback(ctx, postCanvas, feedbackCanvas, width, height, frame, effects, time);
-  }
-
-  if (effects.blockDatamosh) {
-    copyCanvas(postCanvas, canvas, width, height);
-    drawBlockDatamosh(ctx, postCanvas, width, height, frame, time);
-  }
-
-  if (effects.glitchDatamosh) {
-    copyCanvas(postCanvas, canvas, width, height);
-    drawGlitchDatamosh(ctx, postCanvas, width, height, frame, time);
-  }
-
-  if (effects.meltingDatamosh) {
-    copyCanvas(postCanvas, canvas, width, height);
-    drawMeltDatamosh(ctx, postCanvas, width, height, frame, time);
-  }
-
-  if (effects.rgbSplit || effects.chromaticAberration) {
-    copyCanvas(postCanvas, canvas, width, height);
-    drawToggleRgbSplit(ctx, postCanvas, width, height, frame, effects, time);
-  }
-
-  if (effects.glitchNoise) {
-    drawToggleGlitchNoise(ctx, width, height, frame, time);
-  }
-
-  if (effects.cameraShake) {
-    copyCanvas(postCanvas, canvas, width, height);
-    drawCameraShake(ctx, postCanvas, width, height, frame, time);
-  }
-
-  copyCanvas(feedbackCanvas, canvas, width, height);
 }
 
 function drawDatamoshFeedback(

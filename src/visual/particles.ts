@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { ParticleShape } from '../store';
 
 export class ParticleSystem {
   geometry: THREE.BufferGeometry;
@@ -43,6 +44,7 @@ export class ParticleSystem {
         uColorA: { value: new THREE.Color(0x00ffff) },
         uColorB: { value: new THREE.Color(0xff00ff) },
         uParticleSize: { value: 2.0 },
+        uShape: { value: 0 },
       },
       vertexShader: `
         attribute float aPhase;
@@ -83,14 +85,54 @@ export class ParticleSystem {
       fragmentShader: `
         uniform vec3 uColorA;
         uniform vec3 uColorB;
+        uniform float uShape;
         varying float vBrightness;
         varying vec3 vPosition;
 
+        float circleMask(vec2 p) {
+          float d = length(p);
+          return 1.0 - smoothstep(0.36, 0.5, d);
+        }
+
+        float squareMask(vec2 p) {
+          float d = max(abs(p.x), abs(p.y));
+          return 1.0 - smoothstep(0.42, 0.5, d);
+        }
+
+        float diamondMask(vec2 p) {
+          float d = abs(p.x) + abs(p.y);
+          return 1.0 - smoothstep(0.52, 0.72, d);
+        }
+
+        float starMask(vec2 p) {
+          float angle = atan(p.y, p.x);
+          float radius = length(p);
+          float spikes = 0.5 + 0.5 * cos(angle * 5.0);
+          float limit = mix(0.24, 0.5, spikes);
+          return 1.0 - smoothstep(limit, limit + 0.05, radius);
+        }
+
+        float ringMask(vec2 p) {
+          float d = length(p);
+          float outer = 1.0 - smoothstep(0.42, 0.5, d);
+          float inner = 1.0 - smoothstep(0.18, 0.29, d);
+          return max(0.0, outer - inner);
+        }
+
         void main() {
           vec2 uv = gl_PointCoord - 0.5;
-          float d = length(uv);
-          if (d > 0.5) discard;
-          float alpha = (1.0 - smoothstep(0.36, 0.46, d)) * vBrightness;
+          float mask = circleMask(uv);
+          if (uShape > 0.5 && uShape < 1.5) {
+            mask = squareMask(uv);
+          } else if (uShape > 1.5 && uShape < 2.5) {
+            mask = diamondMask(uv);
+          } else if (uShape > 2.5 && uShape < 3.5) {
+            mask = starMask(uv);
+          } else if (uShape > 3.5) {
+            mask = ringMask(uv);
+          }
+          if (mask <= 0.01) discard;
+          float alpha = mask * vBrightness;
           float t = length(vPosition) * 0.2;
           vec3 color = mix(uColorA, uColorB, clamp(t, 0.0, 1.0));
           gl_FragColor = vec4(color, alpha);
@@ -121,8 +163,27 @@ export class ParticleSystem {
     this.material.uniforms.uParticleSize.value = size;
   }
 
+  setShape(shape: ParticleShape) {
+    this.material.uniforms.uShape.value = particleShapeToUniform(shape);
+  }
+
   dispose() {
     this.geometry.dispose();
     this.material.dispose();
+  }
+}
+
+function particleShapeToUniform(shape: ParticleShape) {
+  switch (shape) {
+    case 'square':
+      return 1;
+    case 'diamond':
+      return 2;
+    case 'star':
+      return 3;
+    case 'ring':
+      return 4;
+    default:
+      return 0;
   }
 }

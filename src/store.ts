@@ -9,6 +9,49 @@ export type WaveBackgroundMode = 'solid' | 'image';
 export type ImageFxPreset = 'clean' | 'glitch' | 'dreamy' | 'dark' | 'vhs';
 export type ImageFxEffectKey = 'glow' | 'blur' | 'rgbShift' | 'noise' | 'distortion' | 'pulse';
 export type LiveHelpLanguage = 'en' | 'ja';
+export type ParticleShape = 'circle' | 'square' | 'diamond' | 'star' | 'ring';
+export type VisualizerLayerId = 'background' | 'particles' | 'objects' | 'waveform';
+export type ImageFxLayerId =
+  | 'background'
+  | 'distortion'
+  | 'rgbShift'
+  | 'glow'
+  | 'pulse'
+  | 'noise'
+  | 'scanlines'
+  | 'vignette'
+  | 'datamosh'
+  | 'blockDatamosh'
+  | 'glitchDatamosh'
+  | 'meltDatamosh'
+  | 'toggleRgb'
+  | 'glitch'
+  | 'cameraShake';
+
+export const DEFAULT_IMAGE_FX_LAYER_ORDER: ImageFxLayerId[] = [
+  'background',
+  'distortion',
+  'rgbShift',
+  'glow',
+  'pulse',
+  'datamosh',
+  'blockDatamosh',
+  'glitchDatamosh',
+  'meltDatamosh',
+  'toggleRgb',
+  'noise',
+  'glitch',
+  'scanlines',
+  'vignette',
+  'cameraShake',
+];
+
+export const DEFAULT_VISUALIZER_LAYER_ORDER: VisualizerLayerId[] = [
+  'background',
+  'particles',
+  'objects',
+  'waveform',
+];
 
 export interface AudioAnalysis {
   bpm: number;
@@ -38,6 +81,12 @@ export interface EffectSettings {
 export interface ParticleSettings {
   countScale: number;
   sizeScale: number;
+  shape: ParticleShape;
+}
+
+export interface VisualizerSettings {
+  cameraDistance: number;
+  morphIntensity: number;
 }
 
 export interface WaveVisualizerSettings {
@@ -69,8 +118,11 @@ export interface AppState {
   presetRevision: number;
   effects: EffectSettings;
   particleSettings: ParticleSettings;
+  visualizerSettings: VisualizerSettings;
+  visualizerLayerOrder: VisualizerLayerId[];
   waveSettings: WaveVisualizerSettings;
   imageFxSettings: ImageFxSettings;
+  imageFxLayerOrder: ImageFxLayerId[];
   isLiveMode: boolean;
   liveUiVisible: boolean;
   liveHelpOpen: boolean;
@@ -99,10 +151,17 @@ export interface AppState {
   toggleEffect: (e: keyof EffectSettings) => void;
   setParticleCountScale: (value: number) => void;
   setParticleSizeScale: (value: number) => void;
+  setParticleShape: (shape: ParticleShape) => void;
+  setCameraDistance: (value: number) => void;
+  setMorphIntensity: (value: number) => void;
+  moveVisualizerLayer: (layer: VisualizerLayerId, direction: -1 | 1) => void;
+  resetVisualizerLayerOrder: () => void;
   setWaveType: (type: WaveVisualizerType) => void;
   setWaveBackgroundMode: (mode: WaveBackgroundMode) => void;
   setImageFxPreset: (preset: ImageFxPreset, values: Omit<ImageFxSettings, 'preset'>) => void;
   setImageFxEffect: (key: ImageFxEffectKey, value: number) => void;
+  moveImageFxLayer: (layer: ImageFxLayerId, direction: -1 | 1) => void;
+  resetImageFxLayerOrder: () => void;
   setIsLiveMode: (value: boolean) => void;
   setLiveUiVisible: (value: boolean) => void;
   setLiveHelpOpen: (value: boolean) => void;
@@ -145,7 +204,13 @@ export const useStore = create<AppState>((set) => ({
   particleSettings: {
     countScale: 1,
     sizeScale: 1,
+    shape: 'circle',
   },
+  visualizerSettings: {
+    cameraDistance: 5,
+    morphIntensity: 1.35,
+  },
+  visualizerLayerOrder: DEFAULT_VISUALIZER_LAYER_ORDER,
   waveSettings: {
     type: 'horizontal',
     backgroundMode: 'solid',
@@ -159,6 +224,7 @@ export const useStore = create<AppState>((set) => ({
     distortion: 0.08,
     pulse: 0.2,
   },
+  imageFxLayerOrder: DEFAULT_IMAGE_FX_LAYER_ORDER,
   isLiveMode: false,
   liveUiVisible: true,
   liveHelpOpen: false,
@@ -190,6 +256,22 @@ export const useStore = create<AppState>((set) => ({
     set((s) => ({ particleSettings: { ...s.particleSettings, countScale } })),
   setParticleSizeScale: (sizeScale) =>
     set((s) => ({ particleSettings: { ...s.particleSettings, sizeScale } })),
+  setParticleShape: (shape) =>
+    set((s) => ({ particleSettings: { ...s.particleSettings, shape } })),
+  setCameraDistance: (cameraDistance) =>
+    set((s) => ({ visualizerSettings: { ...s.visualizerSettings, cameraDistance } })),
+  setMorphIntensity: (morphIntensity) =>
+    set((s) => ({ visualizerSettings: { ...s.visualizerSettings, morphIntensity } })),
+  moveVisualizerLayer: (layer, direction) =>
+    set((s) => {
+      const order = [...s.visualizerLayerOrder];
+      const index = order.indexOf(layer);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return {};
+      [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+      return { visualizerLayerOrder: order };
+    }),
+  resetVisualizerLayerOrder: () => set({ visualizerLayerOrder: [...DEFAULT_VISUALIZER_LAYER_ORDER] }),
   setWaveType: (type) =>
     set((s) => ({ waveSettings: { ...s.waveSettings, type } })),
   setWaveBackgroundMode: (backgroundMode) =>
@@ -198,6 +280,16 @@ export const useStore = create<AppState>((set) => ({
     set({ imageFxSettings: { preset, ...values } }),
   setImageFxEffect: (key, value) =>
     set((s) => ({ imageFxSettings: { ...s.imageFxSettings, [key]: value } })),
+  moveImageFxLayer: (layer, direction) =>
+    set((s) => {
+      const order = [...s.imageFxLayerOrder];
+      const index = order.indexOf(layer);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= order.length) return {};
+      [order[index], order[nextIndex]] = [order[nextIndex], order[index]];
+      return { imageFxLayerOrder: order };
+    }),
+  resetImageFxLayerOrder: () => set({ imageFxLayerOrder: [...DEFAULT_IMAGE_FX_LAYER_ORDER] }),
   setIsLiveMode: (isLiveMode) =>
     set({
       isLiveMode,

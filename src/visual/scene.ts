@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { ParticleSystem } from './particles';
 import type { PresetConfig } from './presets';
+import type { ParticleShape, VisualizerLayerId } from '../store';
+
+const DEFAULT_3D_LAYER_ORDER: VisualizerLayerId[] = ['background', 'particles', 'objects', 'waveform'];
+const BACKGROUND_PLANE_DISTANCE = 50;
 
 export class VisualizerScene {
   renderer: THREE.WebGLRenderer;
@@ -12,7 +16,10 @@ export class VisualizerScene {
   private waveformLine: THREE.Line | null = null;
   private waveformLineR: THREE.Line | null = null;
   private backgroundTexture: THREE.Texture | null = null;
+  private backgroundPlane!: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  private backgroundPlaneMaterial!: THREE.MeshBasicMaterial;
   private fallbackBackgroundColor = new THREE.Color(0x050508);
+  private visualizerLayerOrder: VisualizerLayerId[] = [...DEFAULT_3D_LAYER_ORDER];
 
   // Post-processing using manual render target approach
   private rtA: THREE.WebGLRenderTarget;
@@ -28,6 +35,8 @@ export class VisualizerScene {
 
   private time = 0;
   private cameraAngle = 0;
+  private cameraDistance = 5;
+  private morphIntensity = 1.35;
   private bloomStrength = 0;
   private datamoshAmount = 0;
   private postEffectActive = true;
@@ -57,6 +66,21 @@ export class VisualizerScene {
       1000,
     );
     this.camera.position.set(0, 0, 5);
+    this.scene.add(this.camera);
+
+    this.backgroundPlaneMaterial = new THREE.MeshBasicMaterial({
+      color: this.fallbackBackgroundColor,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    this.backgroundPlane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.backgroundPlaneMaterial);
+    this.backgroundPlane.position.set(0, 0, -BACKGROUND_PLANE_DISTANCE);
+    this.backgroundPlane.frustumCulled = false;
+    this.camera.add(this.backgroundPlane);
+    this.updateBackgroundPlaneSize(initialWidth, initialHeight);
+    this.applyLayerOrder();
 
     // Ambient light
     const ambient = new THREE.AmbientLight(0xffffff, 0.1);
@@ -269,7 +293,9 @@ export class VisualizerScene {
     this.renderer.setClearColor(preset.backgroundColor, 1);
     this.fallbackBackgroundColor = preset.backgroundColor;
     if (!this.backgroundTexture) {
-      this.scene.background = preset.backgroundColor;
+      this.backgroundPlaneMaterial.map = null;
+      this.backgroundPlaneMaterial.color.copy(preset.backgroundColor);
+      this.backgroundPlaneMaterial.needsUpdate = true;
     }
 
     if (preset.geometryMode === 'particles') {
@@ -308,10 +334,35 @@ export class VisualizerScene {
       this.scene.add(this.waveformLine);
       this.scene.add(this.waveformLineR);
     }
+
+    this.applyLayerOrder();
   }
 
   setParticleSize(size: number) {
     this.particleSystem?.setParticleSize(size);
+  }
+
+  setParticleShape(shape: ParticleShape) {
+    this.particleSystem?.setShape(shape);
+  }
+
+  setCameraDistance(distance: number) {
+    this.cameraDistance = Math.max(2.5, Math.min(14, distance));
+  }
+
+  setMorphIntensity(intensity: number) {
+    this.morphIntensity = Math.max(0.1, Math.min(4, intensity));
+  }
+
+  setLayerOrder(order: VisualizerLayerId[]) {
+    const nextOrder = order.filter((layer): layer is VisualizerLayerId =>
+      DEFAULT_3D_LAYER_ORDER.includes(layer),
+    );
+    for (const layer of DEFAULT_3D_LAYER_ORDER) {
+      if (!nextOrder.includes(layer)) nextOrder.push(layer);
+    }
+    this.visualizerLayerOrder = nextOrder;
+    this.applyLayerOrder();
   }
 
   update(
@@ -342,27 +393,45 @@ export class VisualizerScene {
     const bpmFactor = bpm / 120;
 
     if (this.particleSystem) {
-      this.particleSystem.update(this.time, bass, mid, high, transient);
+      const morphBass = clamp01(bass * this.morphIntensity);
+      const morphMid = clamp01(mid * this.morphIntensity);
+      const morphHigh = clamp01(high * this.morphIntensity);
+      const morphTransient = clamp01(transient * this.morphIntensity);
+      this.particleSystem.update(this.time, morphBass, morphMid, morphHigh, morphTransient);
     }
 
     // Animate preset shape cloud
     if (this.rectGroup) {
       const baseRotationSpeed = dt * bpmFactor * 0.3;
-      this.rectGroup.rotation.y += baseRotationSpeed;
-      this.rectGroup.rotation.x += dt * bpmFactor * 0.15;
+      this.rectGroup.rotation.y += baseRotationSpeed * (1 + this.morphIntensity * 0.18);
+      this.rectGroup.rotation.x += dt * bpmFactor * (0.15 + this.morphIntensity * 0.035);
+      const morph = this.morphIntensity;
 
       // Animate individual shapes
       this.rectGroup.children.forEach((child, index) => {
         const mesh = child as THREE.Mesh;
         const mat = mesh.material as THREE.MeshStandardMaterial;
         const offset = index * 0.1;
-        mesh.rotation.z = this.time * 0.5 + offset;
+        const basePosition = mesh.userData.basePosition as THREE.Vector3 | undefined;
+        const morphSeed = (mesh.userData.morphSeed as number | undefined) ?? offset;
+        mesh.rotation.z = this.time * (0.45 + morph * 0.2) + offset;
+        mesh.rotation.x += dt * (0.18 + high * morph * 0.9);
+        mesh.rotation.y += dt * (0.14 + mid * morph * 0.65);
 
-        // Scale based on audio
-        const scaleMult = 1 + transient * 0.3 + bass * 0.15 * Math.sin(this.time * 2 + offset);
-        mesh.scale.setScalar(scaleMult);
+        if (basePosition) {
+          const wave = Math.sin(this.time * 2.2 + morphSeed) * mid * morph * 0.22;
+          const radial = 1 + bass * morph * 0.22 + transient * morph * 0.4 + wave;
+          mesh.position.copy(basePosition).multiplyScalar(radial);
+          mesh.position.y += Math.sin(this.time * 4.1 + morphSeed) * high * morph * 0.36;
+        }
 
-        mat.emissiveIntensity = 0;
+        const scaleX = 1 + transient * morph * 0.7 + bass * morph * 0.28;
+        const scaleY = 1 + high * morph * 0.52 + Math.sin(this.time * 3.3 + offset) * mid * morph * 0.16;
+        const scaleZ = 1 + mid * morph * 0.42 + transient * morph * 0.22;
+        mesh.scale.set(scaleX, scaleY, scaleZ);
+
+        mat.emissive.copy(mat.color);
+        mat.emissiveIntensity = Math.min(0.5, (transient * 0.42 + high * 0.22 + bass * 0.14) * morph);
       });
     }
 
@@ -378,9 +447,9 @@ export class VisualizerScene {
     // Camera orbit
     this.cameraAngle += dt * bpmFactor * 0.1;
     const shake = effects.cameraShake ? transient * 0.15 : 0;
-    this.camera.position.x = Math.sin(this.cameraAngle) * 5 + (Math.random() - 0.5) * shake;
-    this.camera.position.y = Math.sin(this.cameraAngle * 0.5) * 1.5 + (Math.random() - 0.5) * shake;
-    this.camera.position.z = Math.cos(this.cameraAngle) * 5;
+    this.camera.position.x = Math.sin(this.cameraAngle) * this.cameraDistance + (Math.random() - 0.5) * shake;
+    this.camera.position.y = Math.sin(this.cameraAngle * 0.5) * this.cameraDistance * 0.3 + (Math.random() - 0.5) * shake;
+    this.camera.position.z = Math.cos(this.cameraAngle) * this.cameraDistance;
     this.camera.lookAt(0, 0, 0);
 
     // Update waveform lines
@@ -482,6 +551,7 @@ export class VisualizerScene {
     this.rtFinalFrame.setSize(safeWidth, safeHeight);
     this.bloomPass.setSize(safeWidth, safeHeight);
 
+    this.updateBackgroundPlaneSize(safeWidth, safeHeight);
     this.updateBackgroundTextureCover();
   }
 
@@ -516,7 +586,9 @@ export class VisualizerScene {
     }
 
     if (!url) {
-      this.scene.background = this.fallbackBackgroundColor;
+      this.backgroundPlaneMaterial.map = null;
+      this.backgroundPlaneMaterial.color.copy(this.fallbackBackgroundColor);
+      this.backgroundPlaneMaterial.needsUpdate = true;
       return;
     }
 
@@ -525,9 +597,49 @@ export class VisualizerScene {
       texture.minFilter = THREE.LinearFilter;
       texture.magFilter = THREE.LinearFilter;
       texture.colorSpace = THREE.SRGBColorSpace;
-      this.scene.background = texture;
+      this.backgroundPlaneMaterial.map = texture;
+      this.backgroundPlaneMaterial.color.set(0xffffff);
+      this.backgroundPlaneMaterial.needsUpdate = true;
       this.updateBackgroundTextureCover();
     });
+  }
+
+  private applyLayerOrder() {
+    this.backgroundPlane.renderOrder = this.getLayerRenderOrder('background');
+
+    if (this.particleSystem) {
+      this.particleSystem.points.renderOrder = this.getLayerRenderOrder('particles');
+    }
+
+    const objectRenderOrder = this.getLayerRenderOrder('objects');
+    if (this.geometryMesh) {
+      this.geometryMesh.renderOrder = objectRenderOrder;
+      setDepthWrite(this.geometryMesh.material, false);
+    }
+    if (this.rectGroup) {
+      this.rectGroup.renderOrder = objectRenderOrder;
+      this.rectGroup.traverse((obj) => {
+        obj.renderOrder = objectRenderOrder;
+        if (obj instanceof THREE.Mesh) {
+          setDepthWrite(obj.material, false);
+        }
+      });
+    }
+
+    const waveformRenderOrder = this.getLayerRenderOrder('waveform');
+    if (this.waveformLine) this.waveformLine.renderOrder = waveformRenderOrder;
+    if (this.waveformLineR) this.waveformLineR.renderOrder = waveformRenderOrder;
+  }
+
+  private getLayerRenderOrder(layer: VisualizerLayerId) {
+    const index = this.visualizerLayerOrder.indexOf(layer);
+    return (index >= 0 ? index : DEFAULT_3D_LAYER_ORDER.indexOf(layer)) * 10;
+  }
+
+  private updateBackgroundPlaneSize(width: number, height: number) {
+    const aspect = width / Math.max(1, height);
+    const verticalSize = 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2) * BACKGROUND_PLANE_DISTANCE;
+    this.backgroundPlane.scale.set(verticalSize * aspect * 1.02, verticalSize * 1.02, 1);
   }
 
   private updateBackgroundTextureCover() {
@@ -566,6 +678,8 @@ export class VisualizerScene {
     this.rtFinalFrame.dispose();
     this.copyMaterial.dispose();
     this.bloomPass.dispose();
+    this.backgroundPlane.geometry.dispose();
+    this.backgroundPlaneMaterial.dispose();
     if (this.backgroundTexture) this.backgroundTexture.dispose();
     this.renderer.dispose();
   }
@@ -703,7 +817,7 @@ function createWaveformLine(color: THREE.Color, points: number): THREE.Line {
   const positions = new Float32Array(points * 3);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.7 });
+  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.7, depthWrite: false });
   return new THREE.Line(geo, mat);
 }
 
@@ -722,6 +836,17 @@ function updateWaveformLine(line: THREE.Line, data: Float32Array) {
     positions[offset + 2] = Math.sin(progress * Math.PI * 4) * 0.45 + y * 0.18;
   }
   attribute.needsUpdate = true;
+}
+
+function clamp01(value: number) {
+  return Math.min(1, Math.max(0, value));
+}
+
+function setDepthWrite(material: THREE.Material | THREE.Material[], depthWrite: boolean) {
+  const materials = Array.isArray(material) ? material : [material];
+  materials.forEach((mat) => {
+    mat.depthWrite = depthWrite;
+  });
 }
 
 function createRandomShapeCloud(
@@ -749,6 +874,7 @@ function createRandomShapeCloud(
       side: THREE.DoubleSide,
       transparent: true,
       opacity: 0.8,
+      depthWrite: false,
     });
 
     const mesh = new THREE.Mesh(geo, mat);
@@ -763,6 +889,8 @@ function createRandomShapeCloud(
       radius * Math.sin(phi) * Math.sin(theta),
       radius * Math.cos(phi),
     );
+    mesh.userData.basePosition = mesh.position.clone();
+    mesh.userData.morphSeed = Math.random() * Math.PI * 2;
 
     // Random initial rotation
     mesh.rotation.set(

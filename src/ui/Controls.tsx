@@ -12,13 +12,17 @@ import Chip from '@mui/material/Chip';
 import LinearProgress from '@mui/material/LinearProgress';
 import Slider from '@mui/material/Slider';
 import Tooltip from '@mui/material/Tooltip';
+import IconButton from '@mui/material/IconButton';
 import { useStore } from '../store';
 import type {
   DisplayMode,
   EffectSettings,
+  ImageFxLayerId,
   ImageFxEffectKey,
   ImageFxPreset,
+  ParticleShape,
   PresetId,
+  VisualizerLayerId,
   WaveBackgroundMode,
   WaveVisualizerType,
 } from '../store';
@@ -27,6 +31,9 @@ import { IMAGE_FX_PRESET_LABELS, IMAGE_FX_PRESETS } from '../visual/imageFxPrese
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import GraphicEqIcon from '@mui/icons-material/GraphicEq';
 import CancelIcon from '@mui/icons-material/Cancel';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 
 const EFFECT_LABELS: { key: keyof EffectSettings; label: string }[] = [
   { key: 'chromaticAberration', label: 'Chromatic' },
@@ -49,6 +56,39 @@ const IMAGE_FX_SLIDERS: { key: ImageFxEffectKey; label: string }[] = [
   { key: 'pulse', label: 'Pulse' },
 ];
 
+const PARTICLE_SHAPES: { value: ParticleShape; label: string }[] = [
+  { value: 'circle', label: 'Circle' },
+  { value: 'square', label: 'Square' },
+  { value: 'diamond', label: 'Diamond' },
+  { value: 'star', label: 'Star' },
+  { value: 'ring', label: 'Ring' },
+];
+
+const VISUALIZER_LAYER_LABELS: Record<VisualizerLayerId, string> = {
+  background: 'Background',
+  particles: 'Particles',
+  objects: '3D Objects',
+  waveform: 'Waveform Lines',
+};
+
+const IMAGE_FX_LAYER_LABELS: Record<ImageFxLayerId, string> = {
+  background: 'Background',
+  distortion: 'Distortion',
+  rgbShift: 'RGB Shift',
+  glow: 'Glow',
+  pulse: 'Pulse',
+  noise: 'Noise',
+  scanlines: 'Scanlines',
+  vignette: 'Vignette',
+  datamosh: 'Datamosh',
+  blockDatamosh: 'Block Datamosh',
+  glitchDatamosh: 'Glitch Datamosh',
+  meltDatamosh: 'Melt Datamosh',
+  toggleRgb: 'Chromatic / RGB Split',
+  glitch: 'Glitch',
+  cameraShake: 'Cam Shake',
+};
+
 interface ControlsProps {
   onExport: () => void;
   onCancelExport: () => void;
@@ -68,8 +108,11 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     exportDownloadName,
     fps,
     particleSettings,
+    visualizerSettings,
+    visualizerLayerOrder,
     waveSettings,
     imageFxSettings,
+    imageFxLayerOrder,
     backgroundImageUrl,
     isLiveMode,
     liveUiVisible,
@@ -79,10 +122,17 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     toggleEffect,
     setParticleCountScale,
     setParticleSizeScale,
+    setParticleShape,
+    setCameraDistance,
+    setMorphIntensity,
+    moveVisualizerLayer,
+    resetVisualizerLayerOrder,
     setWaveType,
     setWaveBackgroundMode,
     setImageFxPreset,
     setImageFxEffect,
+    moveImageFxLayer,
+    resetImageFxLayerOrder,
     setIsLiveMode,
     setLiveUiVisible,
     setLiveHelpOpen,
@@ -236,6 +286,32 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
             </ToggleButtonGroup>
           </Paper>
 
+          <Paper elevation={0} sx={{ p: 1.5 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1, display: 'block', mb: 1 }}>
+              Camera / Morph
+            </Typography>
+            <ControlSlider
+              label="Camera Distance"
+              value={visualizerSettings.cameraDistance}
+              valueLabel={visualizerSettings.cameraDistance.toFixed(1)}
+              min={2.8}
+              max={12}
+              step={0.1}
+              disabled={isExporting}
+              onChange={setCameraDistance}
+            />
+            <ControlSlider
+              label="Morph"
+              value={visualizerSettings.morphIntensity}
+              valueLabel={`${Math.round(visualizerSettings.morphIntensity * 100)}%`}
+              min={0.35}
+              max={3}
+              step={0.05}
+              disabled={isExporting}
+              onChange={setMorphIntensity}
+            />
+          </Paper>
+
           {/* Particles */}
           <Paper elevation={0} sx={{ p: 1.5 }}>
             <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1, display: 'block', mb: 1 }}>
@@ -261,6 +337,33 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
               disabled={isExporting}
               onChange={setParticleSizeScale}
             />
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: 10, display: 'block', mt: 1.25, mb: 0.5 }}>
+              Shape
+            </Typography>
+            <ToggleButtonGroup
+              value={particleSettings.shape}
+              exclusive
+              onChange={(_, value) => value && setParticleShape(value as ParticleShape)}
+              fullWidth
+              size="small"
+              disabled={isExporting}
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                '& .MuiToggleButton-root': {
+                  fontSize: 10,
+                  px: 0.5,
+                  py: 0.45,
+                  letterSpacing: 0,
+                },
+              }}
+            >
+              {PARTICLE_SHAPES.map(({ value, label }) => (
+                <ToggleButton key={value} value={value}>
+                  {label}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
           </Paper>
 
           {/* Effects */}
@@ -269,6 +372,17 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
               Effects
             </Typography>
             <EffectToggleList effects={effects} onToggle={toggleEffect} />
+          </Paper>
+
+          <Paper elevation={0} sx={{ p: 1.5 }}>
+            <LayerOrderControls
+              order={visualizerLayerOrder}
+              labels={VISUALIZER_LAYER_LABELS}
+              highlightedLayer="background"
+              disabled={isExporting}
+              onMove={moveVisualizerLayer}
+              onReset={resetVisualizerLayerOrder}
+            />
           </Paper>
         </>
       ) : displayMode === 'wave' ? (
@@ -373,6 +487,16 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
             Effects
           </Typography>
           <EffectToggleList effects={effects} onToggle={toggleEffect} />
+
+          <Divider sx={{ my: 1.25 }} />
+          <LayerOrderControls
+            order={imageFxLayerOrder}
+            labels={IMAGE_FX_LAYER_LABELS}
+            highlightedLayer="background"
+            disabled={isExporting}
+            onMove={moveImageFxLayer}
+            onReset={resetImageFxLayerOrder}
+          />
         </Paper>
       )}
 
@@ -476,6 +600,91 @@ function EffectToggleList({
           sx={{ m: 0, py: 0.25 }}
         />
       ))}
+    </Box>
+  );
+}
+
+function LayerOrderControls<TLayer extends string>({
+  order,
+  labels,
+  highlightedLayer,
+  disabled,
+  onMove,
+  onReset,
+}: {
+  order: TLayer[];
+  labels: Record<TLayer, string>;
+  highlightedLayer?: TLayer;
+  disabled: boolean;
+  onMove: (layer: TLayer, direction: -1 | 1) => void;
+  onReset: () => void;
+}) {
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.75 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1, flex: 1 }}>
+          Layer Order
+        </Typography>
+        <Tooltip title="Reset layer order">
+          <span>
+            <IconButton
+              size="small"
+              onClick={onReset}
+              disabled={disabled}
+              sx={{ p: 0.35 }}
+              aria-label="Reset layer order"
+            >
+              <RestartAltIcon sx={{ fontSize: 15 }} />
+            </IconButton>
+          </span>
+        </Tooltip>
+      </Box>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.35 }}>
+        {order.map((layer, index) => {
+          const label = labels[layer];
+          const isHighlighted = layer === highlightedLayer;
+          return (
+            <Box
+              key={layer}
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: '20px 1fr 24px 24px',
+                alignItems: 'center',
+                gap: 0.35,
+                minHeight: 26,
+                px: 0.5,
+                borderRadius: 1,
+                bgcolor: isHighlighted ? 'rgba(0, 229, 238, 0.08)' : 'rgba(255,255,255,0.035)',
+              }}
+            >
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: 9, fontWeight: 700 }}>
+                {index + 1}
+              </Typography>
+              <Typography variant="caption" sx={{ fontSize: 10, fontWeight: isHighlighted ? 700 : 500 }}>
+                {label}
+              </Typography>
+              <IconButton
+                size="small"
+                onClick={() => onMove(layer, -1)}
+                disabled={disabled || index === 0}
+                sx={{ p: 0.2 }}
+                aria-label={`Move ${label} up`}
+              >
+                <KeyboardArrowUpIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+              <IconButton
+                size="small"
+                onClick={() => onMove(layer, 1)}
+                disabled={disabled || index === order.length - 1}
+                sx={{ p: 0.2 }}
+                aria-label={`Move ${label} down`}
+              >
+                <KeyboardArrowDownIcon sx={{ fontSize: 15 }} />
+              </IconButton>
+            </Box>
+          );
+        })}
+      </Box>
     </Box>
   );
 }
