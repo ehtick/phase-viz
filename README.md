@@ -168,9 +168,7 @@ Before making large changes, please open an issue or discussion first.
 
 ## License
 
-Please check the repository license before using or modifying this project.
-
-If no license has been added yet, consider adding an open-source license such as MIT, Apache-2.0, or GPL depending on the intended usage.
+This project is licensed under the MIT License.
 
 ## Author
 
