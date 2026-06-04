@@ -180,8 +180,9 @@ Music producer / independent creator exploring the intersection of music product
 
 ## Links
 
-* Demo: `Add demo URL here`
-* Music Video Example: `Add YouTube / NicoNico URL here`
-* X / Twitter: `Add X profile or related post here`
-* Repository: `Add GitHub repository URL here`
+* Demo: `https://waveform.tranjectories.xyz/`
+* Music Video Example: `https://www.youtube.com/watch?v=R8ItWr2V_ZA`
+* X / Twitter: `https://x.com/nagisa7g/status/2061390154967978117`
+'https://x.com/nagisa7g/status/2059545274310344726'
+* Repository: `https://github.com/7g3n/phase-viz/`
 
