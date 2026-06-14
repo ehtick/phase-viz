@@ -105,6 +105,13 @@ Exact codec, fullscreen, performance, and file-decoding support varies by browse
 | MP4 export | `src/export/` | WebCodecs encoding, MP4 muxing, ffmpeg.wasm fallback, and downloads |
 | Deployment | `vite.config.ts`, `wrangler.toml` | Vite build and Cloudflare static asset hosting |
 
+## Related Projects
+
+* [Web Audio Three.js Starter](https://github.com/7g3n/web-audio-threejs-starter) — A minimal React and TypeScript starter that demonstrates how to analyze local audio with the Web Audio API and map volume, frequency bands, and waveform data to a Three.js mesh and particle system.
+
+Live demo:
+https://7g3n.github.io/web-audio-threejs-starter/
+
 ## Contributing
 
 Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), review the [Code of Conduct](CODE_OF_CONDUCT.md), and use the issue templates when reporting a bug or proposing an improvement.
