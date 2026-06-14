@@ -114,8 +114,8 @@ async function getFFmpeg(signal?: AbortSignal): Promise<FFmpegType> {
         console.log('[ffmpeg] resolved URLs', urls);
         const r = await fetch(urls.coreURL, { method: 'GET' });
         console.log('[ffmpeg] core GET', r.status);
-        const r2 = await fetch(urls.wasmURL, { method: 'GET' });
-        console.log('[ffmpeg] wasm GET', r2.status);
+        const wasmResponse = await fetch(urls.wasmURL, { method: 'GET' });
+        console.log('[ffmpeg] wasm GET', wasmResponse.status);
       } catch (e) {
         console.warn('[ffmpeg] pre-load checks failed', e);
       }

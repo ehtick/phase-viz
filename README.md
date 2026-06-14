@@ -1,8 +1,57 @@
 # Audio Reactive 3D Visualizer
 
+音源をブラウザ上で解析し、音声に反応する3Dビジュアル、波形、画像エフェクトをリアルタイムに生成するオープンソースのWebアプリです。作成した映像は1920x1080のMP4として書き出せます。
+
+デモ: https://waveform.tranjectories.xyz/
+
+## 主な機能
+
+- Web Audio APIによる音量・周波数・波形解析
+- Three.js / WebGLを使った音声反応型3Dビジュアライザー
+- Wave Visualizer Mode
+- 画像と2Dエフェクトで構成するImage FX Mode
+- フルスクリーン、UI非表示、キーボード操作に対応したLive / VJ Mode
+- パーティクル数、サイズ、形状、カメラ距離、モーフ強度の調整
+- 背景、粒子、3Dオブジェクト、波形、各種エフェクトのレイヤー順変更
+- WebCodecsおよびffmpeg.wasmを利用したMP4書き出し
+
+## 使用技術
+
+- React
+- TypeScript
+- Vite
+- Three.js / WebGL
+- Web Audio API
+- Material UI / Emotion
+- Zustand
+- Cloudflare Workers Static Assets
+
+## ローカルでの起動
+
+```bash
+npm install
+npm run dev
+```
+
+本番ビルド:
+
+```bash
+npm run build
+```
+
+## MP4書き出しについて
+
+対応ブラウザではWebCodecsを優先し、利用できない場合はffmpeg.wasmへフォールバックします。ffmpegのローカルアセットが利用できないデプロイ環境では、jsDelivrから読み込みます。
+
+音声ファイルや背景画像の処理、映像の生成はブラウザ内で行われます。
+
+---
+
+## English
+
 An open-source browser-based Audio Reactive 3D Visualizer for musicians, vocal synth producers, and independent creators.
 
-This project allows users to generate MV-style audio-reactive visuals from their own music and artwork using modern web technologies such as React, TypeScript, Three.js, WebGL, Web Audio API, and Cloudflare Pages.
+This project allows users to generate MV-style audio-reactive visuals from their own music and artwork using modern web technologies such as React, TypeScript, Three.js, WebGL, Web Audio API, and Cloudflare Workers Static Assets.
 
 ## Overview
 
@@ -28,21 +77,25 @@ I wanted a tool that allows musicians to create visual content directly from the
 * Waveform-style visual modes
 * Image FX modes using uploaded artwork
 * Glitch / noise / experimental visual effects
-* Browser-based workflow
-* Cloudflare Pages deployment
+* Live / VJ mode with fullscreen and keyboard controls
+* Browser-based 1920x1080 MP4 export
+* Adjustable particles, camera distance, morphing, and layer order
 * Designed for independent music creators
-* Suitable for MV-style visuals and promotional clips
 
 ## Tech Stack
 
 * React
 * TypeScript
+* Vite
 * Three.js
 * WebGL
 * Web Audio API
 * Canvas
-* Cloudflare Pages
-* Cloudflare R2
+* Material UI / Emotion
+* Zustand
+* WebCodecs
+* ffmpeg.wasm
+* Cloudflare Workers Static Assets
 * Git / GitHub
 
 ## Motivation
@@ -147,7 +200,7 @@ Build for production:
 npm run build
 ```
 
-Deploy with Cloudflare Pages or another static hosting platform.
+Deploy with Cloudflare Workers Static Assets or another static hosting platform.
 
 ## Contributing
 
@@ -172,15 +225,15 @@ This project is licensed under the MIT License.
 
 ## Author
 
-Created by Nagisa Dozono(TRAJECTORIES).
+Created by Nagisa Dozono (TRAJECTORIES).
 
 Music producer / independent creator exploring the intersection of music production, audio-reactive visuals, Web Audio API, Three.js, and creative web tools.
 
 ## Links
 
-* Demo: `https://waveform.tranjectories.xyz/`
-* Music Video Example: `https://www.youtube.com/watch?v=R8ItWr2V_ZA`
-* X / Twitter: `https://x.com/nagisa7g/status/2061390154967978117`
-`https://x.com/nagisa7g/status/2059545274310344726`
-* Repository: `https://github.com/7g3n/phase-viz/`
-
+* Demo: https://waveform.tranjectories.xyz/
+* Music Video Example: https://www.youtube.com/watch?v=R8ItWr2V_ZA
+* X / Twitter:
+  * https://x.com/nagisa7g/status/2061390154967978117
+  * https://x.com/nagisa7g/status/2059545274310344726
+* Repository: https://github.com/7g3n/phase-viz/
