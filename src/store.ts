@@ -10,6 +10,7 @@ export type ImageFxPreset = 'clean' | 'glitch' | 'dreamy' | 'dark' | 'vhs';
 export type ImageFxEffectKey = 'glow' | 'blur' | 'rgbShift' | 'noise' | 'distortion' | 'pulse';
 export type LiveHelpLanguage = 'en' | 'ja';
 export type ParticleShape = 'circle' | 'square' | 'diamond' | 'star' | 'ring';
+export type ExportPresetId = 'fast720p' | 'high1080p';
 export type VisualizerLayerId = 'background' | 'particles' | 'objects' | 'waveform';
 export type ImageFxLayerId =
   | 'background'
@@ -52,6 +53,34 @@ export const DEFAULT_VISUALIZER_LAYER_ORDER: VisualizerLayerId[] = [
   'objects',
   'waveform',
 ];
+
+export interface ExportPreset {
+  id: ExportPresetId;
+  label: string;
+  description: string;
+  width: number;
+  height: number;
+  fps: number;
+}
+
+export const EXPORT_PRESETS: Record<ExportPresetId, ExportPreset> = {
+  fast720p: {
+    id: 'fast720p',
+    label: 'Fast 720p',
+    description: '1280 x 720 / 30 fps',
+    width: 1280,
+    height: 720,
+    fps: 30,
+  },
+  high1080p: {
+    id: 'high1080p',
+    label: 'High 1080p',
+    description: '1920 x 1080 / 30 fps',
+    width: 1920,
+    height: 1080,
+    fps: 30,
+  },
+};
 
 export interface AudioAnalysis {
   bpm: number;
@@ -129,6 +158,7 @@ export interface AppState {
   liveHelpLanguage: LiveHelpLanguage;
   liveIntensity: number;
   liveBoost: boolean;
+  exportPreset: ExportPresetId;
   isExporting: boolean;
   exportProgress: number;
   exportError: string | null;
@@ -168,6 +198,7 @@ export interface AppState {
   setLiveHelpLanguage: (language: LiveHelpLanguage) => void;
   setLiveIntensity: (value: number) => void;
   setLiveBoost: (value: boolean) => void;
+  setExportPreset: (preset: ExportPresetId) => void;
   setIsExporting: (v: boolean) => void;
   setExportProgress: (p: number) => void;
   setExportError: (message: string | null) => void;
@@ -231,6 +262,7 @@ export const useStore = create<AppState>((set) => ({
   liveHelpLanguage: 'en',
   liveIntensity: 1,
   liveBoost: false,
+  exportPreset: 'high1080p',
   isExporting: false,
   exportProgress: 0,
   exportError: null,
@@ -302,6 +334,7 @@ export const useStore = create<AppState>((set) => ({
   setLiveHelpLanguage: (liveHelpLanguage) => set({ liveHelpLanguage }),
   setLiveIntensity: (liveIntensity) => set({ liveIntensity }),
   setLiveBoost: (liveBoost) => set({ liveBoost }),
+  setExportPreset: (exportPreset) => set({ exportPreset }),
   setIsExporting: (isExporting) => set({ isExporting }),
   setExportProgress: (exportProgress) => set({ exportProgress }),
   setExportError: (exportError) => set({ exportError }),

@@ -554,6 +554,7 @@ function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
   const numChannels = buffer.numberOfChannels;
   const sampleRate = buffer.sampleRate;
   const length = buffer.length;
+  const channelData = Array.from({ length: numChannels }, (_, ch) => buffer.getChannelData(ch));
   const arrayBuffer = new ArrayBuffer(44 + length * numChannels * 2);
   const view = new DataView(arrayBuffer);
 
@@ -578,13 +579,33 @@ function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
   view.setUint32(40, length * numChannels * 2, true);
 
   let offset = 44;
-  for (let i = 0; i < length; i++) {
-    for (let ch = 0; ch < numChannels; ch++) {
-      const sample = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
-      view.setInt16(offset, sample * 0x7fff, true);
+  if (numChannels === 1) {
+    const mono = channelData[0];
+    for (let i = 0; i < length; i++) {
+      view.setInt16(offset, floatToInt16(mono[i] ?? 0), true);
       offset += 2;
+    }
+  } else if (numChannels === 2) {
+    const left = channelData[0];
+    const right = channelData[1];
+    for (let i = 0; i < length; i++) {
+      view.setInt16(offset, floatToInt16(left[i] ?? 0), true);
+      view.setInt16(offset + 2, floatToInt16(right[i] ?? 0), true);
+      offset += 4;
+    }
+  } else {
+    for (let i = 0; i < length; i++) {
+      for (let ch = 0; ch < numChannels; ch++) {
+        view.setInt16(offset, floatToInt16(channelData[ch][i] ?? 0), true);
+        offset += 2;
+      }
     }
   }
 
   return arrayBuffer;
+}
+
+function floatToInt16(value: number) {
+  const sample = Math.max(-1, Math.min(1, value));
+  return sample < 0 ? sample * 0x8000 : sample * 0x7fff;
 }

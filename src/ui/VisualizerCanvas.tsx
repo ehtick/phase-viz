@@ -14,9 +14,6 @@ interface Props {
 
 const RENDER_FPS_LIMIT = 30;
 const RENDER_FRAME_INTERVAL_MS = 1000 / RENDER_FPS_LIMIT;
-const EXPORT_FPS_LIMIT = 30;
-const EXPORT_WIDTH = 1920;
-const EXPORT_HEIGHT = 1080;
 
 export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -287,25 +284,26 @@ export default function VisualizerCanvas({ recorderRef, exportRendererRef }: Pro
   );
 
   const renderExportFrames = useCallback<ExportFrameRenderer>(
-    async ({ duration, onProgress, onStatus, signal }) => {
+    async ({ duration, fps, width, height, onProgress, onStatus, signal }) => {
       const scene = sceneRef.current;
       const canvas = canvasRef.current;
       if (!scene || !analysis || !canvas) {
         throw new Error('Visualizer is not ready for export');
       }
 
-      const fps = EXPORT_FPS_LIMIT;
+      const exportWidth = Math.max(2, Math.floor(width / 2) * 2);
+      const exportHeight = Math.max(2, Math.floor(height / 2) * 2);
       const previousPixelRatio = scene.getPixelRatio();
       throwIfAborted(signal);
-      onStatus?.('Preparing 1080p export...');
+      onStatus?.(`Preparing ${exportHeight}p export...`);
       scene.setPixelRatio(1);
-      scene.resize(EXPORT_WIDTH, EXPORT_HEIGHT);
+      scene.resize(exportWidth, exportHeight);
 
       try {
         const exportFrame = createReusableAnalysisFrame();
         const exportLookup = createAnalysisLookup(analysis);
         const drawFrame = (time: number, frame: number) => {
-          scene.resize(EXPORT_WIDTH, EXPORT_HEIGHT);
+          scene.resize(exportWidth, exportHeight);
           sampleAnalysisFrameInto(analysis, time, exportFrame, exportLookup);
           renderAnalyzedFrame(scene, analysis, preset, effects, exportFrame, frame === 0 ? 0 : 1 / fps);
         };

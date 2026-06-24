@@ -298,8 +298,33 @@ async function waitForVideoQueue(
     } else if (performance.now() - lastQueueChangeAt > 15_000) {
       throw new Error(`Video encoder stalled with ${encoder.encodeQueueSize} frames queued`);
     }
-    await yieldToBrowser();
+    await waitForEncoderDequeue(encoder, signal);
   }
+}
+
+function waitForEncoderDequeue(encoder: VideoEncoder, signal?: AbortSignal): Promise<void> {
+  if (encoder.encodeQueueSize <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let timeoutId = 0;
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      encoder.removeEventListener('dequeue', onDequeue);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = () => {
+      cleanup();
+      resolve();
+    };
+    const onDequeue = () => finish();
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException('Export was canceled', 'AbortError'));
+    };
+
+    encoder.addEventListener('dequeue', onDequeue, { once: true });
+    signal?.addEventListener('abort', onAbort, { once: true });
+    timeoutId = window.setTimeout(finish, 50);
+  });
 }
 
 function yieldToBrowser(): Promise<void> {

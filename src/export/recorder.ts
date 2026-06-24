@@ -6,6 +6,8 @@ export interface RecorderFrame {
 export interface ExportRenderOptions {
   duration: number;
   fps: number;
+  width: number;
+  height: number;
   onProgress: (progress: number) => void;
   onStatus?: (status: string) => void;
   signal?: AbortSignal;
