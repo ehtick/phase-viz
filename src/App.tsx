@@ -16,8 +16,8 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import VideocamIcon from '@mui/icons-material/Videocam';
 import theme from './theme';
-import { useStore } from './store';
-import type { ImageFxPreset, PresetId, WaveVisualizerType } from './store';
+import { EXPORT_PRESETS, useStore } from './store';
+import type { ExportPreset, ImageFxPreset, PresetId, WaveVisualizerType } from './store';
 import Uploader from './ui/Uploader';
 import Controls from './ui/Controls';
 import React, { Suspense } from 'react';
@@ -57,6 +57,7 @@ export default function App() {
     liveHelpLanguage,
     liveIntensity,
     liveBoost,
+    exportPreset,
     setIsFullscreen,
     setIsExporting,
     setExportProgress,
@@ -84,14 +85,16 @@ export default function App() {
     setIsExporting(true);
     setExportProgress(0);
     setExportError(null);
-    setExportStatus('Preparing export...');
+    const selectedExportPreset = EXPORT_PRESETS[exportPreset];
+    setExportStatus(`Preparing ${selectedExportPreset.label} export...`);
     if (lastExportUrlRef.current) {
       URL.revokeObjectURL(lastExportUrlRef.current);
       lastExportUrlRef.current = null;
     }
     setExportDownload(null);
 
-    const fps = 30;
+    const { fps, width, height } = selectedExportPreset;
+    const exportFileName = getExportFileName(selectedExportPreset);
     let lastProgress = 0;
     let lastProgressAt = 0;
     const reportProgress = (progress: number) => {
@@ -107,6 +110,8 @@ export default function App() {
       const blob = await exportRendererRef.current({
         duration: analysis.duration,
         fps,
+        width,
+        height,
         signal: abortController.signal,
         onProgress: reportProgress,
         onStatus: setExportStatus,
@@ -118,9 +123,9 @@ export default function App() {
 
       const url = URL.createObjectURL(blob);
       lastExportUrlRef.current = url;
-      setExportDownload(url, DEFAULT_EXPORT_FILE_NAME);
+      setExportDownload(url, exportFileName);
       setExportStatus('Download ready');
-      triggerBlobDownload(url, DEFAULT_EXPORT_FILE_NAME);
+      triggerBlobDownload(url, exportFileName);
       reportProgress(1);
     } catch (err) {
       if (!abortController.signal.aborted && !isAbortError(err)) {
@@ -497,6 +502,12 @@ function isAbortError(err: unknown) {
 
 function getErrorMessage(err: unknown) {
   return err instanceof Error ? err.message : 'Export failed unexpectedly';
+}
+
+function getExportFileName(preset: ExportPreset) {
+  return preset.height === 1080
+    ? DEFAULT_EXPORT_FILE_NAME
+    : `audio-visualizer-${preset.height}p.mp4`;
 }
 
 function isEditableTarget(target: EventTarget | null) {

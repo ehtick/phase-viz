@@ -21,10 +21,11 @@ interface WaveFrame {
 
 const RENDER_FPS_LIMIT = 30;
 const RENDER_FRAME_INTERVAL_MS = 1000 / RENDER_FPS_LIMIT;
-const EXPORT_WIDTH = 1920;
-const EXPORT_HEIGHT = 1080;
 const WAVEFORM_POINTS = 1024;
 const SPECTRUM_POINTS = 128;
+const FREQUENCY_CURVE = 1.75;
+const EMPTY_WAVE_FRAME = createWaveFrame();
+const frequencyIndexMapCache = new Map<string, Uint32Array>();
 
 export default function WaveVisualizer({ exportRendererRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,6 +41,9 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
   const fpsSamplesRef = useRef<number[]>([]);
   const timeDomainRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const frequencyRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const liveFrameRef = useRef<WaveFrame | null>(null);
+  const boostedFrameRef = useRef<WaveFrame | null>(null);
+  const exportFrameRef = useRef<WaveFrame | null>(null);
 
   const {
     audioBuffer,
@@ -146,18 +150,19 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
       setFps(fpsSamples.length);
     }
 
+    const reusableFrame = getReusableWaveFrame(liveFrameRef);
     let frame: WaveFrame | null = null;
     if (analyserRef.current && state.isPlaying) {
-      frame = sampleAnalyserFrame(analyserRef.current, timeDomainRef, frequencyRef);
+      frame = sampleAnalyserFrameInto(analyserRef.current, timeDomainRef, frequencyRef, reusableFrame);
       if (audioCtxRef.current) {
         setCurrentTime(audioCtxRef.current.currentTime - audioStartedRef.current);
       }
     } else if (state.audioBuffer && state.analysis) {
-      frame = sampleAudioBufferFrame(state.audioBuffer, state.analysis, state.currentTime);
+      frame = sampleAudioBufferFrameInto(state.audioBuffer, state.analysis, state.currentTime, reusableFrame);
     }
 
     if (frame) {
-      const liveFrame = applyLiveWaveBoost(frame);
+      const liveFrame = applyLiveWaveBoost(frame, getReusableWaveFrame(boostedFrameRef));
       drawWaveFrame(
         canvas,
         liveFrame,
@@ -184,7 +189,7 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
   }, [renderLiveFrame]);
 
   const renderExportFrames = useCallback<ExportFrameRenderer>(
-    async ({ duration, onProgress, onStatus, signal }) => {
+    async ({ duration, fps, width, height, onProgress, onStatus, signal }) => {
       const canvas = canvasRef.current;
       const {
         audioBuffer: exportAudioBuffer,
@@ -199,8 +204,10 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
       throwIfAborted(signal);
       const previousWidth = canvas.width;
       const previousHeight = canvas.height;
-      canvas.width = EXPORT_WIDTH;
-      canvas.height = EXPORT_HEIGHT;
+      const exportWidth = Math.max(2, Math.floor(width / 2) * 2);
+      const exportHeight = Math.max(2, Math.floor(height / 2) * 2);
+      canvas.width = exportWidth;
+      canvas.height = exportHeight;
 
       let exportBackgroundImage: HTMLImageElement | null = null;
       if (waveSettings.backgroundMode === 'image' && exportBackgroundImageUrl) {
@@ -208,9 +215,9 @@ export default function WaveVisualizer({ exportRendererRef }: Props) {
         backgroundImageRef.current = exportBackgroundImage;
       }
 
-      const fps = RENDER_FPS_LIMIT;
+      const exportFrame = getReusableWaveFrame(exportFrameRef);
       const drawFrame = (time: number, frame: number) => {
-        const waveFrame = sampleAudioBufferFrame(exportAudioBuffer, exportAnalysis, time);
+        const waveFrame = sampleAudioBufferFrameInto(exportAudioBuffer, exportAnalysis, time, exportFrame);
         drawWaveFrame(canvas, waveFrame, waveSettings, exportBackgroundImage, time + frame * 0.001);
       };
 
@@ -322,10 +329,30 @@ function resizeCanvasToParent(canvas: HTMLCanvasElement) {
   }
 }
 
-function sampleAnalyserFrame(
+function getReusableWaveFrame(ref: MutableRefObject<WaveFrame | null>) {
+  if (!ref.current) {
+    ref.current = createWaveFrame();
+  }
+  return ref.current;
+}
+
+function createWaveFrame(): WaveFrame {
+  return {
+    waveform: new Float32Array(WAVEFORM_POINTS),
+    spectrum: new Float32Array(SPECTRUM_POINTS),
+    volume: 0,
+    bass: 0,
+    mid: 0,
+    high: 0,
+    transient: 0,
+  };
+}
+
+function sampleAnalyserFrameInto(
   analyser: AnalyserNode,
   timeDomainRef: MutableRefObject<Uint8Array<ArrayBuffer> | null>,
   frequencyRef: MutableRefObject<Uint8Array<ArrayBuffer> | null>,
+  out: WaveFrame,
 ): WaveFrame {
   let timeDomain = timeDomainRef.current;
   if (!timeDomain || timeDomain.length !== analyser.fftSize) {
@@ -341,7 +368,7 @@ function sampleAnalyserFrame(
   analyser.getByteTimeDomainData(timeDomain);
   analyser.getByteFrequencyData(frequency);
 
-  const waveform = new Float32Array(WAVEFORM_POINTS);
+  const { waveform, spectrum } = out;
   let rms = 0;
   for (let i = 0; i < WAVEFORM_POINTS; i++) {
     const sampleIndex = Math.min(timeDomain.length - 1, Math.floor(i / WAVEFORM_POINTS * timeDomain.length));
@@ -350,32 +377,30 @@ function sampleAnalyserFrame(
     rms += value * value;
   }
 
-  const spectrum = new Float32Array(SPECTRUM_POINTS);
+  const indexMap = getFrequencyIndexMap(SPECTRUM_POINTS, frequency.length);
   for (let i = 0; i < SPECTRUM_POINTS; i++) {
-    const sourceIndex = frequencyIndexForBar(i, SPECTRUM_POINTS, frequency.length);
-    spectrum[i] = frequency[sourceIndex] / 255;
+    spectrum[i] = frequency[indexMap[i]] / 255;
   }
 
-  const bands = computeBands(spectrum);
-  return {
-    waveform,
-    spectrum,
-    volume: Math.min(1, Math.sqrt(rms / WAVEFORM_POINTS) * 2.8),
-    bass: bands.bass,
-    mid: bands.mid,
-    high: bands.high,
-    transient: Math.max(0, bands.bass - 0.35) * 1.8,
-  };
+  applyBands(spectrum, out);
+  out.volume = Math.min(1, Math.sqrt(rms / WAVEFORM_POINTS) * 2.8);
+  out.transient = Math.max(0, out.bass - 0.35) * 1.8;
+  return out;
 }
 
-function sampleAudioBufferFrame(audioBuffer: AudioBuffer, analysis: AudioAnalysis, time: number): WaveFrame {
+function sampleAudioBufferFrameInto(
+  audioBuffer: AudioBuffer,
+  analysis: AudioAnalysis,
+  time: number,
+  out: WaveFrame,
+): WaveFrame {
   const channel = audioBuffer.getChannelData(0);
   const sampleRate = audioBuffer.sampleRate;
   const windowSamples = Math.max(WAVEFORM_POINTS, Math.floor(sampleRate * 0.09));
   const centerSample = Math.floor(clamp(time, 0, audioBuffer.duration) * sampleRate);
   const maxStart = Math.max(0, channel.length - windowSamples - 1);
   const start = Math.min(maxStart, Math.max(0, centerSample - Math.floor(windowSamples / 2)));
-  const waveform = new Float32Array(WAVEFORM_POINTS);
+  const { waveform, spectrum } = out;
 
   let rms = 0;
   for (let i = 0; i < WAVEFORM_POINTS; i++) {
@@ -385,29 +410,24 @@ function sampleAudioBufferFrame(audioBuffer: AudioBuffer, analysis: AudioAnalysi
     rms += value * value;
   }
 
-  const spectrum = new Float32Array(SPECTRUM_POINTS);
   const spectrumIndex = Math.min(
     Math.floor((analysis.duration > 0 ? time / analysis.duration : 0) * analysis.spectrum.length),
     Math.max(analysis.spectrum.length - 1, 0),
   );
   const rawSpectrum = analysis.spectrum[spectrumIndex];
   if (rawSpectrum) {
+    const indexMap = getFrequencyIndexMap(SPECTRUM_POINTS, rawSpectrum.length);
     for (let i = 0; i < SPECTRUM_POINTS; i++) {
-      const sourceIndex = frequencyIndexForBar(i, SPECTRUM_POINTS, rawSpectrum.length);
-      spectrum[i] = Math.min(1, Math.sqrt(Math.max(0, rawSpectrum[sourceIndex])) * 24);
+      spectrum[i] = Math.min(1, Math.sqrt(Math.max(0, rawSpectrum[indexMap[i]])) * 24);
     }
+  } else {
+    spectrum.fill(0);
   }
 
-  const bands = computeBands(spectrum);
-  return {
-    waveform,
-    spectrum,
-    volume: Math.min(1, Math.sqrt(rms / WAVEFORM_POINTS) * 3.2),
-    bass: bands.bass,
-    mid: bands.mid,
-    high: bands.high,
-    transient: analysis.transientMap[spectrumIndex] ?? 0,
-  };
+  applyBands(spectrum, out);
+  out.volume = Math.min(1, Math.sqrt(rms / WAVEFORM_POINTS) * 3.2);
+  out.transient = analysis.transientMap[spectrumIndex] ?? 0;
+  return out;
 }
 
 function drawEmptyWaveCanvas(
@@ -415,16 +435,7 @@ function drawEmptyWaveCanvas(
   settings: WaveVisualizerSettings,
   backgroundImage: HTMLImageElement | null,
 ) {
-  const emptyFrame: WaveFrame = {
-    waveform: new Float32Array(WAVEFORM_POINTS),
-    spectrum: new Float32Array(SPECTRUM_POINTS),
-    volume: 0,
-    bass: 0,
-    mid: 0,
-    high: 0,
-    transient: 0,
-  };
-  drawWaveFrame(canvas, emptyFrame, settings, settings.backgroundMode === 'image' ? backgroundImage : null, 0);
+  drawWaveFrame(canvas, EMPTY_WAVE_FRAME, settings, settings.backgroundMode === 'image' ? backgroundImage : null, 0);
 }
 
 function drawWaveFrame(
@@ -434,7 +445,7 @@ function drawWaveFrame(
   backgroundImage: HTMLImageElement | null,
   time: number,
 ) {
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) return;
   const width = canvas.width;
   const height = canvas.height;
@@ -602,19 +613,26 @@ function drawImageCover(
   ctx.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, width, height);
 }
 
-function frequencyIndexForBar(index: number, total: number, sourceLength: number) {
-  const normalized = index / Math.max(1, total - 1);
-  return Math.min(sourceLength - 1, Math.floor(Math.pow(normalized, 1.75) * (sourceLength - 1)));
+function getFrequencyIndexMap(total: number, sourceLength: number) {
+  const key = `${total}:${sourceLength}`;
+  const cached = frequencyIndexMapCache.get(key);
+  if (cached) return cached;
+
+  const map = new Uint32Array(total);
+  for (let i = 0; i < total; i++) {
+    const normalized = i / Math.max(1, total - 1);
+    map[i] = Math.min(sourceLength - 1, Math.floor(Math.pow(normalized, FREQUENCY_CURVE) * (sourceLength - 1)));
+  }
+  frequencyIndexMapCache.set(key, map);
+  return map;
 }
 
-function computeBands(spectrum: Float32Array) {
+function applyBands(spectrum: Float32Array, out: WaveFrame) {
   const bassEnd = Math.max(1, Math.floor(spectrum.length * 0.12));
   const midEnd = Math.max(bassEnd + 1, Math.floor(spectrum.length * 0.46));
-  return {
-    bass: averageRange(spectrum, 0, bassEnd),
-    mid: averageRange(spectrum, bassEnd, midEnd),
-    high: averageRange(spectrum, midEnd, spectrum.length),
-  };
+  out.bass = averageRange(spectrum, 0, bassEnd);
+  out.mid = averageRange(spectrum, bassEnd, midEnd);
+  out.high = averageRange(spectrum, midEnd, spectrum.length);
 }
 
 function averageRange(data: Float32Array, start: number, end: number) {
@@ -626,36 +644,30 @@ function averageRange(data: Float32Array, start: number, end: number) {
   return sum / (safeEnd - start);
 }
 
-function applyLiveWaveBoost(frame: WaveFrame): WaveFrame {
+function applyLiveWaveBoost(frame: WaveFrame, out: WaveFrame): WaveFrame {
   const { isLiveMode, liveIntensity, liveBoost } = useStore.getState();
   if (!isLiveMode) return frame;
   const multiplier = liveIntensity * (liveBoost ? 1.45 : 1);
-  return {
-    ...frame,
-    waveform: scaleSignedFloatArray(frame.waveform, multiplier),
-    spectrum: scaleFloatArray(frame.spectrum, multiplier),
-    volume: clamp01(frame.volume * multiplier),
-    bass: clamp01(frame.bass * multiplier),
-    mid: clamp01(frame.mid * multiplier),
-    high: clamp01(frame.high * multiplier),
-    transient: clamp01(frame.transient * multiplier),
-  };
+  scaleSignedFloatArrayInto(frame.waveform, multiplier, out.waveform);
+  scaleFloatArrayInto(frame.spectrum, multiplier, out.spectrum);
+  out.volume = clamp01(frame.volume * multiplier);
+  out.bass = clamp01(frame.bass * multiplier);
+  out.mid = clamp01(frame.mid * multiplier);
+  out.high = clamp01(frame.high * multiplier);
+  out.transient = clamp01(frame.transient * multiplier);
+  return out;
 }
 
-function scaleFloatArray(values: Float32Array, multiplier: number) {
-  const next = new Float32Array(values.length);
+function scaleFloatArrayInto(values: Float32Array, multiplier: number, out: Float32Array) {
   for (let i = 0; i < values.length; i++) {
-    next[i] = clamp01(values[i] * multiplier);
+    out[i] = clamp01(values[i] * multiplier);
   }
-  return next;
 }
 
-function scaleSignedFloatArray(values: Float32Array, multiplier: number) {
-  const next = new Float32Array(values.length);
+function scaleSignedFloatArrayInto(values: Float32Array, multiplier: number, out: Float32Array) {
   for (let i = 0; i < values.length; i++) {
-    next[i] = clamp(values[i] * multiplier, -1, 1);
+    out[i] = clamp(values[i] * multiplier, -1, 1);
   }
-  return next;
 }
 
 function loadImage(src: string, signal?: AbortSignal) {

@@ -41,6 +41,8 @@ export class VisualizerScene {
   private datamoshAmount = 0;
   private postEffectActive = true;
   private wasDatamoshActive = false;
+  private viewportWidth = 1;
+  private viewportHeight = 1;
 
   constructor(canvas: HTMLCanvasElement) {
     const initialWidth = Math.max(1, Math.floor(canvas.clientWidth || 1920));
@@ -89,6 +91,8 @@ export class VisualizerScene {
     // Render targets for post-processing
     const w = initialWidth;
     const h = initialHeight;
+    this.viewportWidth = w;
+    this.viewportHeight = h;
     this.rtA = new THREE.WebGLRenderTarget(w, h, { stencilBuffer: false });
     this.rtB = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false, stencilBuffer: false });
     this.rtPrevFrame = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false, stencilBuffer: false });
@@ -538,9 +542,15 @@ export class VisualizerScene {
     this.wasDatamoshActive = true;
   }
 
-  resize(width: number, height: number) {
+  resize(width: number, height: number, force = false) {
     const safeWidth = Math.max(1, Math.floor(width));
     const safeHeight = Math.max(1, Math.floor(height));
+    if (!force && safeWidth === this.viewportWidth && safeHeight === this.viewportHeight) {
+      return;
+    }
+
+    this.viewportWidth = safeWidth;
+    this.viewportHeight = safeHeight;
 
     this.camera.aspect = safeWidth / safeHeight;
     this.camera.updateProjectionMatrix();
@@ -564,7 +574,7 @@ export class VisualizerScene {
     const width = canvas.parentElement?.clientWidth || canvas.clientWidth || 1;
     const height = canvas.parentElement?.clientHeight || canvas.clientHeight || 1;
     this.renderer.setPixelRatio(pixelRatio);
-    this.resize(width, height);
+    this.resize(width, height, true);
   }
 
   resetExportState() {

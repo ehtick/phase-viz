@@ -13,10 +13,11 @@ import LinearProgress from '@mui/material/LinearProgress';
 import Slider from '@mui/material/Slider';
 import Tooltip from '@mui/material/Tooltip';
 import IconButton from '@mui/material/IconButton';
-import { useStore } from '../store';
+import { EXPORT_PRESETS, useStore } from '../store';
 import type {
   DisplayMode,
   EffectSettings,
+  ExportPresetId,
   ImageFxLayerId,
   ImageFxEffectKey,
   ImageFxPreset,
@@ -63,6 +64,8 @@ const PARTICLE_SHAPES: { value: ParticleShape; label: string }[] = [
   { value: 'star', label: 'Star' },
   { value: 'ring', label: 'Ring' },
 ];
+
+const EXPORT_PRESET_OPTIONS = Object.values(EXPORT_PRESETS);
 
 const VISUALIZER_LAYER_LABELS: Record<VisualizerLayerId, string> = {
   background: 'Background',
@@ -117,6 +120,7 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     isLiveMode,
     liveUiVisible,
     liveIntensity,
+    exportPreset,
     setDisplayMode,
     setPreset,
     toggleEffect,
@@ -136,8 +140,10 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
     setIsLiveMode,
     setLiveUiVisible,
     setLiveHelpOpen,
+    setExportPreset,
   } = useStore();
   const activePreset = PRESETS[preset];
+  const activeExportPreset = EXPORT_PRESETS[exportPreset];
   const visibleParticleCount = Math.round(
     activePreset.particleCount
       * particleSettings.countScale
@@ -508,6 +514,34 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
         <Chip label={`${fps} fps`} size="small" variant="outlined" sx={{ fontSize: 10, height: 18 }} />
       </Box>
 
+      <Box sx={{ px: 0.5 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', letterSpacing: 1, display: 'block', mb: 0.75 }}>
+          Export Preset
+        </Typography>
+        <ToggleButtonGroup
+          value={exportPreset}
+          exclusive
+          onChange={(_, value) => value && setExportPreset(value as ExportPresetId)}
+          orientation="vertical"
+          fullWidth
+          size="small"
+          disabled={isExporting}
+        >
+          {EXPORT_PRESET_OPTIONS.map((option) => (
+            <ToggleButton key={option.id} value={option.id} sx={{ justifyContent: 'flex-start', px: 1.25, py: 0.65 }}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" sx={{ fontSize: 11, fontWeight: 700, textAlign: 'left', lineHeight: 1.25 }}>
+                  {option.label}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: 9.5, display: 'block', lineHeight: 1.2 }}>
+                  {option.description}
+                </Typography>
+              </Box>
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
+      </Box>
+
       {/* Export */}
       {isExporting ? (
         <Box sx={{ px: 0.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
@@ -549,7 +583,7 @@ export default function Controls({ onExport, onCancelExport }: ControlsProps) {
               </Button>
             </Tooltip>
           )}
-          <Tooltip title={!analysis ? 'Upload audio first' : 'Export 1080p MP4'}>
+          <Tooltip title={!analysis ? 'Upload audio first' : `Export ${activeExportPreset.description} MP4`}>
             <span>
               <Button
                 variant="contained"

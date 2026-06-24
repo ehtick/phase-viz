@@ -27,11 +27,13 @@ interface CoverRect {
 
 const RENDER_FPS_LIMIT = 30;
 const RENDER_FRAME_INTERVAL_MS = 1000 / RENDER_FPS_LIMIT;
-const EXPORT_WIDTH = 1920;
-const EXPORT_HEIGHT = 1080;
 const SPECTRUM_POINTS = 128;
 const NOISE_WIDTH = 180;
 const NOISE_HEIGHT = 102;
+const FREQUENCY_CURVE = 1.72;
+const EMPTY_IMAGE_FX_FRAME = createEmptyFrame();
+const frequencyIndexMapCache = new Map<string, Uint32Array>();
+const noiseImageDataCache = new WeakMap<HTMLCanvasElement, ImageData>();
 
 export default function ImageFXVisualizer({ exportRendererRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -49,6 +51,9 @@ export default function ImageFXVisualizer({ exportRendererRef }: Props) {
   const fpsSamplesRef = useRef<number[]>([]);
   const timeDomainRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const frequencyRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const liveFrameRef = useRef<ImageFxFrame | null>(null);
+  const boostedFrameRef = useRef<ImageFxFrame | null>(null);
+  const exportFrameRef = useRef<ImageFxFrame | null>(null);
 
   const {
     audioBuffer,
@@ -154,19 +159,20 @@ export default function ImageFXVisualizer({ exportRendererRef }: Props) {
       setFps(fpsSamples.length);
     }
 
+    const reusableFrame = getReusableImageFxFrame(liveFrameRef);
     let frame: ImageFxFrame | null = null;
     if (analyserRef.current && state.isPlaying) {
-      frame = sampleAnalyserFrame(analyserRef.current, timeDomainRef, frequencyRef);
+      frame = sampleAnalyserFrameInto(analyserRef.current, timeDomainRef, frequencyRef, reusableFrame);
       if (audioCtxRef.current) {
         setCurrentTime(audioCtxRef.current.currentTime - audioStartedRef.current);
       }
     } else if (state.audioBuffer && state.analysis) {
-      frame = sampleAudioBufferFrame(state.audioBuffer, state.analysis, state.currentTime);
+      frame = sampleAudioBufferFrameInto(state.audioBuffer, state.analysis, state.currentTime, reusableFrame);
     }
 
     drawImageFxFrame(
       canvas,
-      applyLiveImageFxBoost(frame ?? createEmptyFrame()),
+      applyLiveImageFxBoost(frame ?? EMPTY_IMAGE_FX_FRAME, getReusableImageFxFrame(boostedFrameRef)),
       state.imageFxSettings,
       state.effects,
       state.imageFxLayerOrder,
@@ -189,7 +195,7 @@ export default function ImageFXVisualizer({ exportRendererRef }: Props) {
   }, [renderLiveFrame]);
 
   const renderExportFrames = useCallback<ExportFrameRenderer>(
-    async ({ duration, onProgress, onStatus, signal }) => {
+    async ({ duration, fps, width, height, onProgress, onStatus, signal }) => {
       const canvas = canvasRef.current;
       const {
         audioBuffer: exportAudioBuffer,
@@ -206,8 +212,10 @@ export default function ImageFXVisualizer({ exportRendererRef }: Props) {
       throwIfAborted(signal);
       const previousWidth = canvas.width;
       const previousHeight = canvas.height;
-      canvas.width = EXPORT_WIDTH;
-      canvas.height = EXPORT_HEIGHT;
+      const exportWidth = Math.max(2, Math.floor(width / 2) * 2);
+      const exportHeight = Math.max(2, Math.floor(height / 2) * 2);
+      canvas.width = exportWidth;
+      canvas.height = exportHeight;
 
       let exportBackgroundImage: HTMLImageElement | null = null;
       if (exportBackgroundImageUrl) {
@@ -215,13 +223,13 @@ export default function ImageFXVisualizer({ exportRendererRef }: Props) {
         backgroundImageRef.current = exportBackgroundImage;
       }
 
-      const fps = RENDER_FPS_LIMIT;
       const noiseCanvas = getNoiseCanvas(noiseCanvasRef);
-      const postCanvas = getEffectCanvas(postCanvasRef, EXPORT_WIDTH, EXPORT_HEIGHT);
-      const feedbackCanvas = getEffectCanvas(feedbackCanvasRef, EXPORT_WIDTH, EXPORT_HEIGHT);
+      const postCanvas = getEffectCanvas(postCanvasRef, exportWidth, exportHeight);
+      const feedbackCanvas = getEffectCanvas(feedbackCanvasRef, exportWidth, exportHeight);
+      const exportFrame = getReusableImageFxFrame(exportFrameRef);
       clearEffectCanvas(feedbackCanvas);
       const drawFrame = (time: number, frame: number) => {
-        const fxFrame = sampleAudioBufferFrame(exportAudioBuffer, exportAnalysis, time);
+        const fxFrame = sampleAudioBufferFrameInto(exportAudioBuffer, exportAnalysis, time, exportFrame);
         drawImageFxFrame(
           canvas,
           fxFrame,
@@ -344,10 +352,18 @@ function resizeCanvasToParent(canvas: HTMLCanvasElement) {
   }
 }
 
-function sampleAnalyserFrame(
+function getReusableImageFxFrame(ref: MutableRefObject<ImageFxFrame | null>) {
+  if (!ref.current) {
+    ref.current = createEmptyFrame();
+  }
+  return ref.current;
+}
+
+function sampleAnalyserFrameInto(
   analyser: AnalyserNode,
   timeDomainRef: MutableRefObject<Uint8Array<ArrayBuffer> | null>,
   frequencyRef: MutableRefObject<Uint8Array<ArrayBuffer> | null>,
+  out: ImageFxFrame,
 ): ImageFxFrame {
   let timeDomain = timeDomainRef.current;
   if (!timeDomain || timeDomain.length !== analyser.fftSize) {
@@ -369,24 +385,24 @@ function sampleAnalyserFrame(
     rms += value * value;
   }
 
-  const spectrum = new Float32Array(SPECTRUM_POINTS);
+  const { spectrum } = out;
+  const indexMap = getFrequencyIndexMap(SPECTRUM_POINTS, frequency.length);
   for (let i = 0; i < SPECTRUM_POINTS; i++) {
-    const sourceIndex = frequencyIndexForBar(i, SPECTRUM_POINTS, frequency.length);
-    spectrum[i] = frequency[sourceIndex] / 255;
+    spectrum[i] = frequency[indexMap[i]] / 255;
   }
 
-  const bands = computeBands(spectrum);
-  return {
-    spectrum,
-    volume: Math.min(1, Math.sqrt(rms / timeDomain.length) * 3),
-    bass: bands.bass,
-    mid: bands.mid,
-    high: bands.high,
-    transient: Math.max(0, bands.bass - 0.34) * 1.9,
-  };
+  applyBands(spectrum, out);
+  out.volume = Math.min(1, Math.sqrt(rms / timeDomain.length) * 3);
+  out.transient = Math.max(0, out.bass - 0.34) * 1.9;
+  return out;
 }
 
-function sampleAudioBufferFrame(audioBuffer: AudioBuffer, analysis: AudioAnalysis, time: number): ImageFxFrame {
+function sampleAudioBufferFrameInto(
+  audioBuffer: AudioBuffer,
+  analysis: AudioAnalysis,
+  time: number,
+  out: ImageFxFrame,
+): ImageFxFrame {
   const channel = audioBuffer.getChannelData(0);
   const sampleRate = audioBuffer.sampleRate;
   const windowSamples = Math.max(1024, Math.floor(sampleRate * 0.06));
@@ -400,28 +416,25 @@ function sampleAudioBufferFrame(audioBuffer: AudioBuffer, analysis: AudioAnalysi
     rms += value * value;
   }
 
-  const spectrum = new Float32Array(SPECTRUM_POINTS);
+  const { spectrum } = out;
   const spectrumIndex = Math.min(
     Math.floor((analysis.duration > 0 ? time / analysis.duration : 0) * analysis.spectrum.length),
     Math.max(analysis.spectrum.length - 1, 0),
   );
   const rawSpectrum = analysis.spectrum[spectrumIndex];
   if (rawSpectrum) {
+    const indexMap = getFrequencyIndexMap(SPECTRUM_POINTS, rawSpectrum.length);
     for (let i = 0; i < SPECTRUM_POINTS; i++) {
-      const sourceIndex = frequencyIndexForBar(i, SPECTRUM_POINTS, rawSpectrum.length);
-      spectrum[i] = Math.min(1, Math.sqrt(Math.max(0, rawSpectrum[sourceIndex])) * 24);
+      spectrum[i] = Math.min(1, Math.sqrt(Math.max(0, rawSpectrum[indexMap[i]])) * 24);
     }
+  } else {
+    spectrum.fill(0);
   }
 
-  const bands = computeBands(spectrum);
-  return {
-    spectrum,
-    volume: Math.min(1, Math.sqrt(rms / windowSamples) * 3.2),
-    bass: bands.bass,
-    mid: bands.mid,
-    high: bands.high,
-    transient: analysis.transientMap[spectrumIndex] ?? 0,
-  };
+  applyBands(spectrum, out);
+  out.volume = Math.min(1, Math.sqrt(rms / windowSamples) * 3.2);
+  out.transient = analysis.transientMap[spectrumIndex] ?? 0;
+  return out;
 }
 
 function drawImageFxFrame(
@@ -436,7 +449,7 @@ function drawImageFxFrame(
   postCanvas: HTMLCanvasElement,
   feedbackCanvas: HTMLCanvasElement,
 ) {
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) return;
   const width = canvas.width;
   const height = canvas.height;
@@ -735,16 +748,17 @@ function drawNoise(
   const strength = settings.noise * (0.18 + frame.high * 0.4 + frame.transient * 0.22);
   if (strength <= 0.01) return;
 
-  const noiseCtx = noiseCanvas.getContext('2d');
+  const noiseCtx = noiseCanvas.getContext('2d', { alpha: false });
   if (!noiseCtx) return;
-  const imageData = noiseCtx.createImageData(NOISE_WIDTH, NOISE_HEIGHT);
+  const imageData = getNoiseImageData(noiseCanvas, noiseCtx);
   const seed = Math.floor(time * 60);
-  for (let i = 0; i < imageData.data.length; i += 4) {
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
     const value = hashNoise(i + seed) * 255;
-    imageData.data[i] = value;
-    imageData.data[i + 1] = value;
-    imageData.data[i + 2] = value;
-    imageData.data[i + 3] = 255;
+    data[i] = value;
+    data[i + 1] = value;
+    data[i + 2] = value;
+    data[i + 3] = 255;
   }
   noiseCtx.putImageData(imageData, 0, 0);
 
@@ -1027,19 +1041,26 @@ function getCoverRect(image: HTMLImageElement, width: number, height: number): C
   return { sx, sy, sw, sh };
 }
 
-function frequencyIndexForBar(index: number, total: number, sourceLength: number) {
-  const normalized = index / Math.max(1, total - 1);
-  return Math.min(sourceLength - 1, Math.floor(Math.pow(normalized, 1.72) * (sourceLength - 1)));
+function getFrequencyIndexMap(total: number, sourceLength: number) {
+  const key = `${total}:${sourceLength}`;
+  const cached = frequencyIndexMapCache.get(key);
+  if (cached) return cached;
+
+  const map = new Uint32Array(total);
+  for (let i = 0; i < total; i++) {
+    const normalized = i / Math.max(1, total - 1);
+    map[i] = Math.min(sourceLength - 1, Math.floor(Math.pow(normalized, FREQUENCY_CURVE) * (sourceLength - 1)));
+  }
+  frequencyIndexMapCache.set(key, map);
+  return map;
 }
 
-function computeBands(spectrum: Float32Array) {
+function applyBands(spectrum: Float32Array, out: ImageFxFrame) {
   const bassEnd = Math.max(1, Math.floor(spectrum.length * 0.12));
   const midEnd = Math.max(bassEnd + 1, Math.floor(spectrum.length * 0.48));
-  return {
-    bass: averageRange(spectrum, 0, bassEnd),
-    mid: averageRange(spectrum, bassEnd, midEnd),
-    high: averageRange(spectrum, midEnd, spectrum.length),
-  };
+  out.bass = averageRange(spectrum, 0, bassEnd);
+  out.mid = averageRange(spectrum, bassEnd, midEnd);
+  out.high = averageRange(spectrum, midEnd, spectrum.length);
 }
 
 function averageRange(data: Float32Array, start: number, end: number) {
@@ -1061,6 +1082,17 @@ function getNoiseCanvas(noiseCanvasRef: MutableRefObject<HTMLCanvasElement | nul
   return noiseCanvasRef.current;
 }
 
+function getNoiseImageData(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D) {
+  const cached = noiseImageDataCache.get(canvas);
+  if (cached && cached.width === NOISE_WIDTH && cached.height === NOISE_HEIGHT) {
+    return cached;
+  }
+
+  const imageData = ctx.createImageData(NOISE_WIDTH, NOISE_HEIGHT);
+  noiseImageDataCache.set(canvas, imageData);
+  return imageData;
+}
+
 function getEffectCanvas(
   canvasRef: MutableRefObject<HTMLCanvasElement | null>,
   width: number,
@@ -1080,7 +1112,7 @@ function getEffectCanvas(
 }
 
 function clearEffectCanvas(canvas: HTMLCanvasElement) {
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false });
   ctx?.clearRect(0, 0, canvas.width, canvas.height);
 }
 
@@ -1094,7 +1126,7 @@ function copyCanvas(
     targetCanvas.width = width;
     targetCanvas.height = height;
   }
-  const targetCtx = targetCanvas.getContext('2d');
+  const targetCtx = targetCanvas.getContext('2d', { alpha: false });
   if (!targetCtx) return;
   targetCtx.clearRect(0, 0, width, height);
   targetCtx.drawImage(sourceCanvas, 0, 0, width, height);
@@ -1129,27 +1161,23 @@ function createEmptyFrame(): ImageFxFrame {
   };
 }
 
-function applyLiveImageFxBoost(frame: ImageFxFrame): ImageFxFrame {
+function applyLiveImageFxBoost(frame: ImageFxFrame, out: ImageFxFrame): ImageFxFrame {
   const { isLiveMode, liveIntensity, liveBoost } = useStore.getState();
   if (!isLiveMode) return frame;
   const multiplier = liveIntensity * (liveBoost ? 1.45 : 1);
-  return {
-    ...frame,
-    spectrum: scaleFloatArray(frame.spectrum, multiplier),
-    volume: clamp01(frame.volume * multiplier),
-    bass: clamp01(frame.bass * multiplier),
-    mid: clamp01(frame.mid * multiplier),
-    high: clamp01(frame.high * multiplier),
-    transient: clamp01(frame.transient * multiplier),
-  };
+  scaleFloatArrayInto(frame.spectrum, multiplier, out.spectrum);
+  out.volume = clamp01(frame.volume * multiplier);
+  out.bass = clamp01(frame.bass * multiplier);
+  out.mid = clamp01(frame.mid * multiplier);
+  out.high = clamp01(frame.high * multiplier);
+  out.transient = clamp01(frame.transient * multiplier);
+  return out;
 }
 
-function scaleFloatArray(values: Float32Array, multiplier: number) {
-  const next = new Float32Array(values.length);
+function scaleFloatArrayInto(values: Float32Array, multiplier: number, out: Float32Array) {
   for (let i = 0; i < values.length; i++) {
-    next[i] = clamp01(values[i] * multiplier);
+    out[i] = clamp01(values[i] * multiplier);
   }
-  return next;
 }
 
 function loadImage(src: string, signal?: AbortSignal) {
