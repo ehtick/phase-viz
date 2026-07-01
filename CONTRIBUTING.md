@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve Audio Reactive 3D Visualizer.
+Thank you for helping improve phase-viz.
 
 ## Before You Start
 
@@ -35,6 +35,19 @@ npm run build
 The build command runs the TypeScript project build before creating the Vite production bundle.
 
 There is not yet an automated test suite. For visual or interaction changes, describe the browsers, modes, and files you tested manually in the pull request.
+
+## Architecture Contributions
+
+phase-viz is moving toward a reusable browser-native audio visual engine. The current app remains the compatibility layer, so architectural contributions should be incremental and easy to review.
+
+- Add new visual experiments under `src/modes/<modeName>/`.
+- Use `VisualModeDefinition` and `RenderContext` from `src/engine/visual/` for new mode contracts.
+- Consume normalized `AudioFrame` data from `src/engine/audio/` instead of coupling new render code directly to global app state.
+- Keep JSON-shareable preset data aligned with `PhaseVizPreset` in `src/engine/preset/`.
+- Keep Zustand changes inside the relevant `src/state/*Slice.ts` file and preserve the compatibility exports from `src/store.ts`.
+- Keep export behavior browser-native and cancellation-aware.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [src/modes/exampleMinimal](src/modes/exampleMinimal/README.md) for the current direction.
 
 ## Pull Requests
 

@@ -1,55 +1,50 @@
-# Audio Reactive 3D Visualizer
+# phase-viz
 
-Open-source audio-reactive 3D visuals for musicians and creative coders, built with Three.js, WebGL, and the Web Audio API.
+phase-viz is a browser-native audio visual engine for creating, performing, and exporting reactive music visuals.
 
-[Live demo](https://waveform.tranjectories.xyz/) · [Contributing](CONTRIBUTING.md) · [MIT License](LICENSE)
+[Live demo](https://waveform.tranjectories.xyz/) - [Contributing](CONTRIBUTING.md) - [MIT License](LICENSE)
 
-## Technical Write-up
+![phase-viz interface](docs/assets/hero.webp)
 
-- [How I Built an Audio-Reactive 3D Visualizer with Three.js and the Web Audio API](https://dev.to/7g3n/how-i-built-an-audio-reactive-3d-visualizer-with-threejs-and-the-web-audio-api-6an)
+phase-viz currently ships as a full creative web app, but the project is being shaped as a reusable engine for musicians, VJs, creative coders, and developers building browser-native audiovisual tools.
 
-![Audio Reactive 3D Visualizer interface](docs/assets/hero.webp)
+## Why phase-viz?
 
-If this project is useful to you, consider starring the repository or contributing an issue or pull request.
+- Browser-native audio analysis
+- Real-time VJ mode
+- MP4 export with WebCodecs and ffmpeg.wasm fallback
+- JSON-shareable preset foundation
+- Modular visual-mode architecture
+- Built for musicians, VJs, and creative coders
 
-## Overview
+## What It Does Today
 
-Audio Reactive 3D Visualizer is a browser-based creative tool for turning music and artwork into real-time visuals. It analyzes an audio file locally, drives 3D objects, particles, waveforms, and image effects from the result, and can export the composition as a 1920x1080 MP4.
+- Imports local audio files and analyzes them with the Web Audio API
+- Renders three visual modes: 3D Visualizer, Wave Visualizer, and Image FX
+- Supports configurable particles, waveform styles, image effects, visual layers, and presets
+- Provides Live / VJ mode with fullscreen, hidden UI, shortcuts, intensity, and boost controls
+- Exports MP4 locally in the browser with Fast 720p and High 1080p presets
+- Keeps selected media local to the browser; no app backend upload is required
 
-The project is aimed at independent musicians, vocal synth producers, VJs, video creators, and developers exploring audio-reactive graphics on the web.
+## Engine Direction
 
-## Highlights
+The current app is the reference implementation for a broader engine architecture:
 
-- Three visual modes: 3D Visualizer, Wave Visualizer, and Image FX
-- Real-time volume, frequency, and waveform analysis with the Web Audio API
-- Four 3D presets plus configurable particles, camera distance, morphing, and effects
-- Horizontal, circular, and bar waveform styles
-- Image FX presets with glow, blur, RGB shift, noise, distortion, and pulse controls
-- Live / VJ mode with fullscreen, hidden UI, keyboard shortcuts, and effect boost
-- Reorderable visual layers
-- Browser-based 1080p MP4 export using WebCodecs with an ffmpeg.wasm fallback
+```txt
+src/
+  app/          React shell, layout, panels, and stage composition
+  engine/       AudioFrame, VisualMode, PresetRegistry, and ExportEngine foundations
+  modes/        Visual mode packages and contributor examples
+  state/        Zustand slices grouped by responsibility
+  ui/           Existing feature UI and rendering surfaces
+  audio/        Web Audio analysis utilities
+  visual/       Existing Three.js scene, presets, particles, and image FX
+  export/       Existing browser MP4 encoder implementations
+```
 
-## Use Cases
+The refactor is intentionally incremental. Existing visual output and app behavior remain the compatibility layer while new engine-facing APIs are introduced around them.
 
-- Music visualizers and lyric-video backgrounds
-- Promotional clips for music releases
-- Vocal synth and electronic music visuals
-- Live performance and VJ experiments
-- Audio-reactive artwork
-- Music video direction mockups
-- Three.js, WebGL, and Web Audio API learning projects
-
-## Tech Stack
-
-- React 19 and TypeScript
-- Vite
-- Three.js, React Three Fiber, and React Three Drei
-- WebGL and Canvas 2D
-- Web Audio API
-- Material UI and Emotion
-- Zustand
-- WebCodecs, mp4-muxer, and ffmpeg.wasm
-- Cloudflare Workers Static Assets
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the current map.
 
 ## Quick Start
 
@@ -70,14 +65,58 @@ Create a production build with:
 npm run build
 ```
 
+Run linting with:
+
+```bash
+npm run lint
+```
+
+## Adding a Visual Mode
+
+New modes should move toward the `VisualModeDefinition` contract:
+
+```ts
+export type VisualModeDefinition<TConfig = unknown> = {
+  id: string;
+  name: string;
+  description?: string;
+  defaultConfig: TConfig;
+  render: (context: RenderContext<TConfig>) => React.ReactNode;
+};
+```
+
+There is a small example at [src/modes/exampleMinimal](src/modes/exampleMinimal/README.md). It demonstrates the intended folder shape without changing the production mode switch yet.
+
+## Presets
+
+The engine preset foundation lives in `src/engine/preset/`.
+
+```ts
+export type PhaseVizPreset = {
+  schemaVersion: number;
+  id: string;
+  name: string;
+  author?: string;
+  description?: string;
+  mode: string;
+  visual: Record<string, unknown>;
+  audioMapping?: Record<string, unknown>;
+  effects?: Record<string, unknown>;
+  export?: Record<string, unknown>;
+};
+```
+
+Built-in visual presets are mirrored into JSON-friendly preset records so future work can add import, export, sharing, migration, and user preset collections without rewriting the current UI.
+
 ## MP4 Export
 
-The Export MP4 action renders a 1920x1080 video at 30 FPS.
+The UI now calls an `ExportEngine` wrapper while existing encoders remain in place:
 
-1. The app uses WebCodecs when the browser exposes compatible video and audio encoders.
-2. If fast export is unavailable or fails, the app retries with ffmpeg.wasm.
-3. ffmpeg core assets are loaded from `/vendor` when deployed locally and fall back to jsDelivr when those assets are unavailable.
-4. The completed MP4 is generated as a browser blob and downloaded locally.
+1. Visual modes provide an `ExportFrameRenderer`.
+2. `ExportEngine` applies the selected export preset and progress/status callbacks.
+3. The current renderer uses WebCodecs when compatible.
+4. If fast export is unavailable or fails, the renderer retries with ffmpeg.wasm.
+5. The completed MP4 is generated as a browser blob and downloaded locally.
 
 Long tracks and complex scenes can require substantial memory and processing time. Keep the tab open while an export is running.
 
@@ -93,51 +132,47 @@ A current desktop Chromium-based browser is recommended for the fastest WebCodec
 
 Exact codec, fullscreen, performance, and file-decoding support varies by browser and device. There is not yet a maintained compatibility matrix, and the fixed desktop workspace is not optimized for small screens.
 
-## Architecture Overview
+## Tech Stack
 
-| Area | Location | Responsibility |
-| --- | --- | --- |
-| Application shell | `src/App.tsx` | Layout, visual mode selection, live controls, and export orchestration |
-| State | `src/store.ts` | Shared visualizer, playback, effect, and export state |
-| Audio analysis | `src/audio/` | Audio decoding inputs, FFT/spectrogram data, waveform sampling, and BPM detection |
-| Visualizers | `src/ui/VisualizerCanvas.tsx`, `WaveVisualizer.tsx`, `ImageFXVisualizer.tsx` | Real-time rendering and export frame generation |
-| 3D rendering | `src/visual/` | Three.js scene, particles, presets, shaders, and post-processing |
-| MP4 export | `src/export/` | WebCodecs encoding, MP4 muxing, ffmpeg.wasm fallback, and downloads |
-| Deployment | `vite.config.ts`, `wrangler.toml` | Vite build and Cloudflare static asset hosting |
+- React 19 and TypeScript
+- Vite
+- Three.js, React Three Fiber, and React Three Drei
+- WebGL and Canvas 2D
+- Web Audio API
+- Material UI and Emotion
+- Zustand
+- WebCodecs, mp4-muxer, and ffmpeg.wasm
+- Cloudflare Workers Static Assets
+
+## Technical Write-up
+
+- [How I Built an Audio-Reactive 3D Visualizer with Three.js and the Web Audio API](https://dev.to/7g3n/how-i-built-an-audio-reactive-3d-visualizer-with-threejs-and-the-web-audio-api-6an)
 
 ## Related Projects
 
-* [Web Audio Three.js Starter](https://github.com/7g3n/web-audio-threejs-starter) — A minimal React and TypeScript starter that demonstrates how to analyze local audio with the Web Audio API and map volume, frequency bands, and waveform data to a Three.js mesh and particle system.
-
-Live demo:
-https://7g3n.github.io/web-audio-threejs-starter/
+- [Web Audio Three.js Starter](https://github.com/7g3n/web-audio-threejs-starter): a minimal React and TypeScript starter for mapping local audio analysis to a Three.js mesh and particle system.
 
 ## Contributing
 
-Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), review the [Code of Conduct](CODE_OF_CONDUCT.md), and use the issue templates when reporting a bug or proposing an improvement.
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), review the [Code of Conduct](CODE_OF_CONDUCT.md), and use issues or pull requests for bugs, ideas, and improvements.
+
+Good first architecture contributions include:
+
+- A new visual mode under `src/modes/`
+- A preset migration or validation improvement
+- Documentation for audio mappings or browser compatibility
+- Tests around state slices, preset schema, or export utility behavior
 
 Please open an issue before beginning a large behavioral or architectural change. Security reports should follow [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 
+- Move production visual modes fully onto `VisualModeDefinition`
+- Add preset import/export UI for JSON presets
+- Add automated tests for audio analysis, state transitions, and export utilities
 - Improve keyboard and screen-reader accessibility throughout the workspace
 - Add responsive layouts for narrower screens
-- Add automated tests for audio analysis, state transitions, and export utilities
-- Add saveable and shareable visual presets
-- Improve long-duration export performance and resource guidance
 - Publish a tested browser compatibility matrix
-
-## 日本語
-
-Audio Reactive 3D Visualizerは、音源をブラウザ内で解析し、音声に反応する3Dビジュアル、波形、画像エフェクトを生成するオープンソースのWebアプリです。3D Visualizer、Wave Visualizer、Image FXの3モードを備え、作成した映像を1920x1080・30 FPSのMP4として書き出せます。
-
-- デモ: [waveform.tranjectories.xyz](https://waveform.tranjectories.xyz/)
-- 音声解析・画像処理・MP4生成はブラウザ内で行われます
-- WebCodecsが利用できない場合はffmpeg.wasmへフォールバックします
-- 開発を始めるには`npm ci`と`npm run dev`を実行してください
-- バグ報告や機能提案はGitHub Issues、コードの改善はPull Requestから歓迎します
-
-詳しい開発手順は[CONTRIBUTING.md](CONTRIBUTING.md)を参照してください。
 
 ## License
 
